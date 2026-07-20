@@ -1,5 +1,4 @@
 import os, logging, re, sqlite3, datetime
-from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
@@ -23,67 +22,17 @@ def get_db():
 def init_db():
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS barbers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                qualification TEXT NOT NULL,
-                active INTEGER DEFAULT 1
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS appointments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                time TEXT NOT NULL,
-                barber_id INTEGER NOT NULL,
-                client_name TEXT NOT NULL,
-                client_phone TEXT NOT NULL,
-                status TEXT DEFAULT 'ожидает',
-                created TEXT NOT NULL
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS disabled_days (
-                date TEXT PRIMARY KEY
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS issues (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                user_name TEXT NOT NULL,
-                text TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                resolved INTEGER DEFAULT 0
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                text TEXT NOT NULL,
-                rating INTEGER NOT NULL
-            )
-        """)
+        cur.execute("CREATE TABLE IF NOT EXISTS barbers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, qualification TEXT NOT NULL, active INTEGER DEFAULT 1)")
+        cur.execute("CREATE TABLE IF NOT EXISTS appointments (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, time TEXT NOT NULL, barber_id INTEGER NOT NULL, client_name TEXT NOT NULL, client_phone TEXT NOT NULL, status TEXT DEFAULT 'ожидает', created TEXT NOT NULL)")
+        cur.execute("CREATE TABLE IF NOT EXISTS disabled_days (date TEXT PRIMARY KEY)")
+        cur.execute("CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, user_name TEXT NOT NULL, text TEXT NOT NULL, timestamp TEXT NOT NULL, resolved INTEGER DEFAULT 0)")
+        cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, rating INTEGER NOT NULL)")
         cur.execute("SELECT COUNT(*) FROM barbers")
         if cur.fetchone()[0] == 0:
-            cur.executemany("INSERT INTO barbers (name, qualification, active) VALUES (?,?,?)", [
-                ("Алексей", "Топ-барбер", 1),
-                ("Максим", "Про-барбер", 1),
-                ("Дмитрий", "Младший-барбер", 1)
-            ])
+            cur.executemany("INSERT INTO barbers (name, qualification, active) VALUES (?,?,?)", [("Алексей","Топ-барбер",1),("Максим","Про-барбер",1),("Дмитрий","Младший-барбер",1)])
         cur.execute("SELECT COUNT(*) FROM reviews")
         if cur.fetchone()[0] == 0:
-            cur.executemany("INSERT INTO reviews (name, text, rating) VALUES (?,?,?)", [
-                ("Иван", "Безупречный сервис, вернусь ещё.", 5),
-                ("Сергей", "Профессионально и с душой.", 5),
-                ("Алексей", "Отличный барбершоп, всегда доволен результатом.", 5),
-                ("Дмитрий", "Мастера знают своё дело, рекомендую.", 5),
-                ("Егор", "Приятная обстановка и качественная работа.", 5),
-                ("Антон", "Лучшее место для мужских стрижек в городе.", 5),
-                ("Кирилл", "Всегда вовремя, аккуратно и стильно.", 5)
-            ])
+            cur.executemany("INSERT INTO reviews (name, text, rating) VALUES (?,?,?)", [("Иван","Безупречный сервис, вернусь ещё.",5),("Сергей","Профессионально и с душой.",5),("Алексей","Отличный барбершоп, всегда доволен результатом.",5),("Дмитрий","Мастера знают своё дело, рекомендую.",5),("Егор","Приятная обстановка и качественная работа.",5),("Антон","Лучшее место для мужских стрижек в городе.",5),("Кирилл","Всегда вовремя, аккуратно и стильно.",5)])
         conn.commit()
 init_db()
 
@@ -135,10 +84,7 @@ def get_reviews():
 def add_appointment(date, time, barber_id, client_name, client_phone):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO appointments (date, time, barber_id, client_name, client_phone, created) VALUES (?,?,?,?,?,?)",
-            (date, time, barber_id, client_name, client_phone, datetime.datetime.now().isoformat())
-        )
+        cur.execute("INSERT INTO appointments (date, time, barber_id, client_name, client_phone, created) VALUES (?,?,?,?,?,?)", (date, time, barber_id, client_name, client_phone, datetime.datetime.now().isoformat()))
         conn.commit()
         return cur.lastrowid
 
@@ -151,8 +97,7 @@ def update_appointment_status(app_id, status):
 def add_issue(user_id, user_name, text):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO issues (user_id, user_name, text, timestamp) VALUES (?,?,?,?)",
-                    (user_id, user_name, text, datetime.datetime.now().isoformat()))
+        cur.execute("INSERT INTO issues (user_id, user_name, text, timestamp) VALUES (?,?,?,?)", (user_id, user_name, text, datetime.datetime.now().isoformat()))
         conn.commit()
         return cur.lastrowid
 
@@ -210,21 +155,19 @@ ADD_BARBER_STATE, DISABLE_DAY_STATE = range(6, 8)
 ISSUE_STATE = 8
 
 def main_menu_keyboard():
-    keyboard = [
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Меню", callback_data="menu")],
         [InlineKeyboardButton("💬 Сообщить о проблеме", callback_data="issue")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
 def menu_options_keyboard():
-    keyboard = [
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 Записаться", callback_data="book")],
         [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
         [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
         [InlineKeyboardButton("⭐ Отзывы", callback_data="reviews")],
         [InlineKeyboardButton("📞 Контакты", callback_data="contacts")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
 def back_to_menu_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад в меню", callback_data="back_to_menu")]])
@@ -233,12 +176,7 @@ def cancel_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "Добро пожаловать в Alpha – пространство мужского стиля.\n\n"
-        "Мы создаём образы, в которых уверенность становится главным аксессуаром.\n"
-        "Лучшие мастера, безупречный сервис и только мужские стрижки.\n\n"
-        "Выберите действие:"
-    )
+    text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
         await update.message.reply_photo(photo=WELCOME_IMAGE_URL, caption=text, reply_markup=main_menu_keyboard())
     else:
@@ -252,12 +190,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "Опишите, с какой проблемой вы столкнулись.\n\n"
-        "Мы постараемся решить её как можно быстрее.\n"
-        "Отправьте ваше сообщение одним текстом:",
-        reply_markup=cancel_keyboard()
-    )
+    await query.edit_message_text("Опишите, с какой проблемой вы столкнулись.\n\nМы постараемся решить её как можно быстрее.\nОтправьте ваше сообщение одним текстом:", reply_markup=cancel_keyboard())
     return ISSUE_STATE
 
 async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -265,84 +198,30 @@ async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text
     add_issue(user.id, user.full_name, text)
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}"
-        )
+        await context.bot.send_message(chat_id=admin_id, text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}")
     await update.message.reply_text("Благодарим за обращение. Мы свяжемся с вами в ближайшее время.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = (
-        "О нас\n\n"
-        "Alpha – это не просто барбершоп, а место, где рождается стиль.\n"
-        "Наши мастера – профессионалы высочайшего уровня:\n"
-        "🏆 Топ-барберы – эксперты с многолетним стажем;\n"
-        "⭐ Про-барберы – мастера, знающие своё дело;\n"
-        "✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\n"
-        "Мы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\n"
-        "Наши топ-барберы принимают экзамены в ведущих учебных заведениях.\n"
-        "Мы всегда ищем талантливых мастеров для развития в нашей команде.\n\n"
-        "📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n"
-        "📶 Бесплатный Wi-Fi\n"
-        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n"
-        "📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n"
-        "🔗 [2ГИС](https://alpha.2gis.biz/)"
-    )
+    text = "О нас\n\nAlpha – это не просто барбершоп, а место, где рождается стиль.\nНаши мастера – профессионалы высочайшего уровня:\n🏆 Топ-барберы – эксперты с многолетним стажем;\n⭐ Про-барберы – мастера, знающие своё дело;\n✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\nМы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\nНаши топ-барберы принимают экзамены в ведущих учебных заведениях.\nМы всегда ищем талантливых мастеров для развития в нашей команде.\n\n📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n📶 Бесплатный Wi-Fi\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n🔗 [2ГИС](https://alpha.2gis.biz/)"
     if ABOUT_IMAGE_URL:
         await query.delete_message()
-        await update.effective_message.reply_photo(
-            photo=ABOUT_IMAGE_URL,
-            caption=text,
-            reply_markup=back_to_menu_keyboard()
-        )
+        await update.effective_message.reply_photo(photo=ABOUT_IMAGE_URL, caption=text, reply_markup=back_to_menu_keyboard())
     else:
         await query.edit_message_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
 
 async def contacts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = (
-        "📞 *Контакты*\n\n"
-        "Свяжитесь с нами по любым вопросам:\n\n"
-        "Менеджеры:\n"
-        "+7‒988‒591‒06‒58\n"
-        "+7‒967‒338‒96‒69\n\n"
-        "📍 Адрес: г. Астрахань, Кировский район,\n"
-        "2-я Зеленгинская ул., корп. 3, 1 этаж\n\n"
-        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00"
-    )
+    text = "📞 *Контакты*\n\nСвяжитесь с нами по любым вопросам:\n\nМенеджеры:\n+7‒988‒591‒06‒58\n+7‒967‒338‒96‒69\n\n📍 Адрес: г. Астрахань, Кировский район,\n2-я Зеленгинская ул., корп. 3, 1 этаж\n\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00"
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = (
-        "Прайс-лист\n\n"
-        "Топ-барбер\n"
-        "Мужская стрижка .......... 900 ₽\n"
-        "Стрижка + борода ......... 1400 ₽\n"
-        "Стрижка бороды ........... 500 ₽\n\n"
-        "Про-барбер\n"
-        "Мужская стрижка .......... 800 ₽\n"
-        "Стрижка + борода ......... 1300 ₽\n"
-        "Стрижка бороды ........... 500 ₽\n\n"
-        "Младший-барбер\n"
-        "Мужская стрижка .......... 600 ₽\n"
-        "Стрижка + борода ......... 1000 ₽\n"
-        "Стрижка бороды ........... 400 ₽\n\n"
-        "Стрижка под машинку (1 насадка) ... 400 ₽\n"
-        "Стрижка под машинку (2 насадки) ... 500 ₽\n\n"
-        "Доп. услуги\n"
-        "Королевское бритьё ............... 600 ₽\n"
-        "Горячий воск ..................... 300 ₽\n"
-        "Пилинг кожи лица и головы ........ 350 ₽\n"
-        "Тонирование бороды ............... 450 ₽\n"
-        "Тонирование седины ............... 900 ₽\n\n"
-        "Цены могут меняться, уточняйте у администратора."
-    )
+    text = "Прайс-лист\n\nТоп-барбер\nМужская стрижка .......... 900 ₽\nСтрижка + борода ......... 1400 ₽\nСтрижка бороды ........... 500 ₽\n\nПро-барбер\nМужская стрижка .......... 800 ₽\nСтрижка + борода ......... 1300 ₽\nСтрижка бороды ........... 500 ₽\n\nМладший-барбер\nМужская стрижка .......... 600 ₽\nСтрижка + борода ......... 1000 ₽\nСтрижка бороды ........... 400 ₽\n\nСтрижка под машинку (1 насадка) ... 400 ₽\nСтрижка под машинку (2 насадки) ... 500 ₽\n\nДоп. услуги\nКоролевское бритьё ............... 600 ₽\nГорячий воск ..................... 300 ₽\nПилинг кожи лица и головы ........ 350 ₽\nТонирование бороды ............... 450 ₽\nТонирование седины ............... 900 ₽\n\nЦены могут меняться, уточняйте у администратора."
     await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
 
 async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,18 +234,9 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "⭐ *Отзывы наших клиентов*\n\n"
         for r in reviews:
             text += f"*{r['name']}*\n{r['text']}\n\n"
-        text += "Мы ценим каждого клиента!\n\n"
-        text += "📝 Оставить отзыв на 2ГИС: [Ссылка](https://alpha.2gis.biz/)"
-    keyboard = [
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")],
-        [InlineKeyboardButton("📝 Оставить отзыв", url="https://alpha.2gis.biz/")]
-    ]
-    await query.edit_message_text(
-        text,
-        parse_mode='Markdown',
-        disable_web_page_preview=True,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+        text += "Мы ценим каждого клиента!\n\n📝 Оставить отзыв на 2ГИС: [Ссылка](https://alpha.2gis.biz/)"
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")], [InlineKeyboardButton("📝 Оставить отзыв", url="https://alpha.2gis.biz/")]]
+    await query.edit_message_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -470,13 +340,10 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_name = context.user_data['name']
     add_appointment(date_str, time_str, barber_id, client_name, phone)
     barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
-    msg = (f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}")
+    msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(chat_id=admin_id, text=msg)
-    await update.message.reply_text(
-        "✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.",
-        reply_markup=main_menu_keyboard()
-    )
+    await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
 async def back_to_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -543,7 +410,7 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
         await query.edit_message_text("Запись не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
         return
     barber = next((b['name'] for b in get_barbers() if b['id'] == a['barber_id']), "неизвестен")
-    text = (f"Запись #{app_id}\nКлиент: {a['client_name']}\nТелефон: {a['client_phone']}\nДата: {a['date']}\nВремя: {a['time']}\nБарбер: {barber}\nСтатус: {a['status']}")
+    text = f"Запись #{app_id}\nКлиент: {a['client_name']}\nТелефон: {a['client_phone']}\nДата: {a['date']}\nВремя: {a['time']}\nБарбер: {barber}\nСтатус: {a['status']}"
     keyboard = [
         [InlineKeyboardButton("✅ Пришёл", callback_data=f"app_status_{app_id}_пришел")],
         [InlineKeyboardButton("❌ Не пришёл", callback_data=f"app_status_{app_id}_не пришел")],
@@ -709,55 +576,23 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
     app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
 
-    issue_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")],
-        states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
+    issue_conv = ConversationHandler(entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")], states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
     app.add_handler(issue_conv)
 
-    book_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
-        states={
-            DAY: [CallbackQueryHandler(day_selected, pattern="^day_")],
-            TIME_SLOT: [CallbackQueryHandler(time_selected, pattern="^time_")],
-            BARBER: [CallbackQueryHandler(barber_selected, pattern="^barber_")],
-            CLIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_name)],
-            CLIENT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_phone)],
-        },
-        fallbacks=[
-            CallbackQueryHandler(back_to_days, pattern="^back_to_days$"),
-            CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"),
-            CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"),
-            CallbackQueryHandler(cancel_callback, pattern="^cancel$")
-        ],
-        per_message=True,
-    )
+    book_conv = ConversationHandler(entry_points=[CallbackQueryHandler(book_start, pattern="^book$")], states={DAY: [CallbackQueryHandler(day_selected, pattern="^day_")], TIME_SLOT: [CallbackQueryHandler(time_selected, pattern="^time_")], BARBER: [CallbackQueryHandler(barber_selected, pattern="^barber_")], CLIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_name)], CLIENT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_phone)]}, fallbacks=[CallbackQueryHandler(back_to_days, pattern="^back_to_days$"), CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"), CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"), CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
     app.add_handler(book_conv)
 
-    add_barber_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")],
-        states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
+    add_barber_conv = ConversationHandler(entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")], states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
     app.add_handler(add_barber_conv)
 
-    disable_day_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")],
-        states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
+    disable_day_conv = ConversationHandler(entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")], states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
     app.add_handler(disable_day_conv)
 
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
@@ -779,7 +614,6 @@ def main():
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
     app.add_error_handler(error_handler)
-
     logger.info("Бот запущен")
     app.run_polling()
 
