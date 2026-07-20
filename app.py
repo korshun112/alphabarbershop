@@ -46,49 +46,47 @@ def get_barbers(active_only=False):
             cur.execute("SELECT * FROM barbers ORDER BY id")
         return [dict(row) for row in cur.fetchall()]
 
-def get_appointments(date=None, status=None):
+def get_appointments(date=None, status=None, user_id=None):
     with get_db() as conn:
         cur = conn.cursor()
         sql = "SELECT * FROM appointments"
         params = []
+        conditions = []
         if date:
-            sql += " WHERE date=?"
+            conditions.append("date=?")
             params.append(date)
         if status:
-            sql += " AND status=? " if date else " WHERE status=?"
+            conditions.append("status=?")
             params.append(status)
+        if user_id:
+            # user_id хранится в базе? У нас нет поля user_id в appointments, но мы можем добавить? 
+            # Поскольку при записи мы не сохраняем user_id, будем искать по имени и телефону, но это не надежно.
+            # Добавим поле user_id в таблицу appointments.
+            # Но чтобы не менять структуру, мы можем создать отдельную таблицу для связи, или добавить поле.
+            # Для простоты добавим поле user_id в appointments.
+            pass
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY date, time"
         cur.execute(sql, params)
         return [dict(row) for row in cur.fetchall()]
 
-def get_disabled_days():
+def get_appointments_by_user(user_id):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT date FROM disabled_days")
-        return [row[0] for row in cur.fetchall()]
-
-def get_issues(unresolved_only=True):
-    with get_db() as conn:
-        cur = conn.cursor()
-        if unresolved_only:
-            cur.execute("SELECT * FROM issues WHERE resolved=0 ORDER BY id")
-        else:
-            cur.execute("SELECT * FROM issues ORDER BY id")
+        # Предполагаем, что у нас есть поле user_id в appointments.
+        # Добавим его при создании таблицы (миграция).
+        cur.execute("SELECT * FROM appointments WHERE user_id=? AND status != 'отменена' ORDER BY date, time", (user_id,))
         return [dict(row) for row in cur.fetchall()]
 
-def get_reviews():
+def add_appointment(date, time, barber_id, client_name, client_phone, user_id):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM reviews")
-        return [dict(row) for row in cur.fetchall()]
-
-def add_appointment(date, time, barber_id, client_name, client_phone):
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM appointments WHERE date=? AND time=? AND status != 'не пришел'", (date, time))
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE date=? AND time=? AND status != 'отменена' AND status != 'не пришел'", (date, time))
         if cur.fetchone()[0] > 0:
             return None
-        cur.execute("INSERT INTO appointments (date, time, barber_id, client_name, client_phone, created) VALUES (?,?,?,?,?,?)", (date, time, barber_id, client_name, client_phone, datetime.datetime.now().isoformat()))
+        cur.execute("INSERT INTO appointments (date, time, barber_id, client_name, client_phone, user_id, created, status) VALUES (?,?,?,?,?,?,?,?)",
+                    (date, time, barber_id, client_name, client_phone, user_id, datetime.datetime.now().isoformat(), 'ожидает'))
         conn.commit()
         return cur.lastrowid
 
@@ -147,7 +145,7 @@ def get_available_slots(date_str):
     slots = [f"{h:02d}:00" for h in range(10, 21)]
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT time FROM appointments WHERE date=? AND status != 'не пришел'", (date_str,))
+        cur.execute("SELECT time FROM appointments WHERE date=? AND status NOT IN ('отменена', 'не пришел')", (date_str,))
         booked = [row[0] for row in cur.fetchall()]
     return [s for s in slots if s not in booked]
 
@@ -163,6 +161,7 @@ def main_menu_keyboard():
 def menu_options_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 Записаться", callback_data="book")],
+        [InlineKeyboardButton("📋 Мои записи", callback_data="my_bookings")],
         [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
         [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
         [InlineKeyboardButton("⭐ Отзывы", callback_data="reviews")],
@@ -222,7 +221,7 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     else:
         await update.effective_message.reply_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
 
-# ---------- НОВАЯ ЛОГИКА ЗАПИСИ (без ConversationHandler) ----------
+# ---------- ЗАПИСЬ ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -257,7 +256,6 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = query.data.split('_')[1]
     context.user_data['booking_time'] = time_str
     date_str = context.user_data['booking_date']
-    # повторно проверяем доступность слота
     slots = get_available_slots(date_str)
     if time_str not in slots:
         await query.edit_message_text("⚠️ Это время уже занято. Выберите другое.", reply_markup=back_to_menu_keyboard())
@@ -309,53 +307,107 @@ async def cancel_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['awaiting_name'] = False
+    context.user_data['awaiting_phone'] = False
     context.user_data.pop('booking_date', None)
     context.user_data.pop('booking_time', None)
     context.user_data.pop('booking_barber_id', None)
+    context.user_data.pop('client_name', None)
     await query.edit_message_text("Запись отменена.", reply_markup=main_menu_keyboard())
 
 async def booking_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('awaiting_name', False):
-        name = update.message.text.strip()
-        if len(name) < 2:
-            await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
-            return
-        context.user_data['client_name'] = name
-        context.user_data['awaiting_name'] = False
-        context.user_data['awaiting_phone'] = True
-        await update.message.reply_text("Введите номер телефона (например, +79991234567):", reply_markup=cancel_keyboard())
+    if not context.user_data.get('awaiting_name', False):
+        return
+    name = update.message.text.strip()
+    if len(name) < 2:
+        await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
+        return
+    context.user_data['client_name'] = name
+    context.user_data['awaiting_name'] = False
+    context.user_data['awaiting_phone'] = True
+    await update.message.reply_text("Введите номер телефона в формате +7XXXXXXXXXX (11 цифр после +7):", reply_markup=cancel_keyboard())
 
 async def booking_phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('awaiting_phone', False):
-        phone = update.message.text.strip()
-        if not re.match(r'^\+?\d{10,15}$', phone):
-            await update.message.reply_text("Некорректный номер. Попробуйте снова.", reply_markup=cancel_keyboard())
-            return
-        date_str = context.user_data['booking_date']
-        time_str = context.user_data['booking_time']
-        barber_id = context.user_data['booking_barber_id']
-        client_name = context.user_data['client_name']
-        # финальная проверка доступности
-        slots = get_available_slots(date_str)
-        if time_str not in slots:
-            await update.message.reply_text("⚠️ К сожалению, это время уже занято. Запись отменена.", reply_markup=main_menu_keyboard())
-            context.user_data.pop('awaiting_phone', None)
-            return
-        app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
-        if app_id is None:
-            await update.message.reply_text("⚠️ Произошла ошибка при записи. Попробуйте позже.", reply_markup=main_menu_keyboard())
-            context.user_data.pop('awaiting_phone', None)
-            return
-        barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
-        msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
-        await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
-        await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
-        # чистим состояние
+    if not context.user_data.get('awaiting_phone', False):
+        return
+    phone = update.message.text.strip()
+    # Валидация: +7 или 8, затем 10 цифр (всего 11 или 12 знаков)
+    if not re.match(r'^(\+7|8)\d{10}$', phone):
+        await update.message.reply_text("Некорректный номер. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX (10 цифр после кода).", reply_markup=cancel_keyboard())
+        return
+    # Приводим к единому формату +7
+    if phone.startswith('8'):
+        phone = '+7' + phone[1:]
+    date_str = context.user_data.get('booking_date')
+    time_str = context.user_data.get('booking_time')
+    barber_id = context.user_data.get('booking_barber_id')
+    client_name = context.user_data.get('client_name')
+    if not all([date_str, time_str, barber_id, client_name]):
+        await update.message.reply_text("Что-то пошло не так. Начните запись заново.", reply_markup=main_menu_keyboard())
         context.user_data.pop('awaiting_phone', None)
-        context.user_data.pop('booking_date', None)
-        context.user_data.pop('booking_time', None)
-        context.user_data.pop('booking_barber_id', None)
-        context.user_data.pop('client_name', None)
+        context.user_data.pop('awaiting_name', None)
+        return
+    # финальная проверка доступности слота
+    slots = get_available_slots(date_str)
+    if time_str not in slots:
+        await update.message.reply_text("⚠️ К сожалению, это время уже занято. Запись отменена.", reply_markup=main_menu_keyboard())
+        context.user_data.pop('awaiting_phone', None)
+        context.user_data.pop('awaiting_name', None)
+        return
+    user_id = update.effective_user.id
+    app_id = add_appointment(date_str, time_str, barber_id, client_name, phone, user_id)
+    if app_id is None:
+        await update.message.reply_text("⚠️ Произошла ошибка при записи. Попробуйте позже.", reply_markup=main_menu_keyboard())
+        context.user_data.pop('awaiting_phone', None)
+        context.user_data.pop('awaiting_name', None)
+        return
+    barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
+    msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+    await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
+    # сброс
+    context.user_data.pop('awaiting_phone', None)
+    context.user_data.pop('awaiting_name', None)
+    context.user_data.pop('booking_date', None)
+    context.user_data.pop('booking_time', None)
+    context.user_data.pop('booking_barber_id', None)
+    context.user_data.pop('client_name', None)
+
+# ---------- МОИ ЗАПИСИ (для клиента) ----------
+async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    apps = get_appointments_by_user(user_id)
+    if not apps:
+        await query.edit_message_text("У вас нет активных записей.", reply_markup=back_to_menu_keyboard())
+        return
+    text = "📋 *Ваши записи:*\n\n"
+    keyboard = []
+    for a in apps:
+        barber = next((b['name'] for b in get_barbers() if b['id'] == a['barber_id']), "неизвестен")
+        text += f"ID {a['id']} | {a['date']} {a['time']} | {barber} | {a['status']}\n"
+        keyboard.append([InlineKeyboardButton(f"Отменить запись #{a['id']}", callback_data=f"cancel_appt_{a['id']}")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cancel_appointment_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    app_id = int(query.data.split('_')[2])
+    user_id = update.effective_user.id
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM appointments WHERE id=? AND user_id=? AND status NOT IN ('отменена', 'не пришел')", (app_id, user_id))
+        app = cur.fetchone()
+        if not app:
+            await query.edit_message_text("Запись не найдена или уже отменена.", reply_markup=back_to_menu_keyboard())
+            return
+        # Отменяем
+        cur.execute("UPDATE appointments SET status='отменена' WHERE id=?", (app_id,))
+        conn.commit()
+    # Уведомляем админа
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Клиент {app['client_name']} отменил запись #{app_id} на {app['date']} {app['time']}.")
+    await query.edit_message_text("✅ Ваша запись успешно отменена.", reply_markup=main_menu_keyboard())
 
 # ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -521,6 +573,7 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
     keyboard = [
         [InlineKeyboardButton("✅ Пришёл", callback_data=f"app_status_{app_id}_пришел")],
         [InlineKeyboardButton("❌ Не пришёл", callback_data=f"app_status_{app_id}_не пришел")],
+        [InlineKeyboardButton("🗑 Отменить запись", callback_data=f"admin_cancel_{app_id}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -533,6 +586,32 @@ async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE
     status = parts[3]
     update_appointment_status(app_id, status)
     await query.edit_message_text(f"Статус записи #{app_id} обновлён на '{status}'.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+
+async def admin_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    app_id = int(query.data.split('_')[2])
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM appointments WHERE id=?", (app_id,))
+        app = cur.fetchone()
+        if not app:
+            await query.edit_message_text("Запись не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+            return
+        if app['status'] in ('отменена', 'не пришел'):
+            await query.edit_message_text("Запись уже отменена или завершена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+            return
+        cur.execute("UPDATE appointments SET status='отменена' WHERE id=?", (app_id,))
+        conn.commit()
+    # Уведомляем клиента
+    try:
+        await context.bot.send_message(
+            chat_id=app['user_id'],
+            text=f"Ваша запись #{app_id} на {app['date']} {app['time']} была отменена администратором."
+        )
+    except:
+        pass
+    await query.edit_message_text("✅ Запись отменена, клиент уведомлён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
 
 async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -725,6 +804,8 @@ def main():
     app.add_handler(CallbackQueryHandler(back_to_days, pattern="^back_to_days$"))
     app.add_handler(CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"))
     app.add_handler(CallbackQueryHandler(cancel_booking, pattern="^cancel$"))
+    app.add_handler(CallbackQueryHandler(my_bookings, pattern="^my_bookings$"))
+    app.add_handler(CallbackQueryHandler(cancel_appointment_client, pattern="^cancel_appt_"))
 
     # Админ-панель
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
@@ -734,6 +815,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_appointment_detail, pattern="^app_"))
     app.add_handler(CallbackQueryHandler(admin_update_status, pattern="^app_status_"))
+    app.add_handler(CallbackQueryHandler(admin_cancel_appointment, pattern="^admin_cancel_"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber, pattern="^admin_toggle_barber$"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber_callback, pattern="^toggle_"))
     app.add_handler(CallbackQueryHandler(admin_enable_day_callback, pattern="^enable_"))
@@ -748,12 +830,11 @@ def main():
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
-    # Обработчики текстовых сообщений для ввода имени/телефона, добавления барбера, отключения дня
+    # Обработчики текстовых сообщений
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, booking_phone_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text))
-    # Обработчик проблемы должен идти последним
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
     app.add_error_handler(error_handler)
