@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))  
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
 ABOUT_IMAGE_URL = os.getenv("ABOUT_IMAGE_URL", "")
 
@@ -85,6 +85,10 @@ def get_reviews():
 def add_appointment(date, time, barber_id, client_name, client_phone):
     with get_db() as conn:
         cur = conn.cursor()
+        # Проверяем, не занято ли уже это время (на случай гонки)
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE date=? AND time=? AND status != 'не пришел'", (date, time))
+        if cur.fetchone()[0] > 0:
+            return None
         cur.execute("INSERT INTO appointments (date, time, barber_id, client_name, client_phone, created) VALUES (?,?,?,?,?,?)", (date, time, barber_id, client_name, client_phone, datetime.datetime.now().isoformat()))
         conn.commit()
         return cur.lastrowid
@@ -414,11 +418,33 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = context.user_data['time']
     barber_id = context.user_data['barber_id']
     client_name = context.user_data['name']
-    add_appointment(date_str, time_str, barber_id, client_name, phone)
+
+    # Проверяем, не занято ли уже это время (гонка)
+    slots = get_available_slots(date_str)
+    if time_str not in slots:
+        await update.message.reply_text(
+            "⚠️ К сожалению, это время уже занято. Пожалуйста, начните запись заново.",
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
+
+    # Сохраняем запись
+    app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
+    if app_id is None:
+        await update.message.reply_text(
+            "⚠️ Произошла ошибка при записи. Пожалуйста, попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
+
     barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
     msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)  # отправляем одному админу
-    await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+
+    await update.message.reply_text(
+        "✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.",
+        reply_markup=main_menu_keyboard()
+    )
     return ConversationHandler.END
 
 async def back_to_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -445,6 +471,7 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
+# ---------- АДМИН-ПАНЕЛЬ (без изменений) ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
@@ -631,8 +658,28 @@ async def admin_issue_resolve(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     issue_id = int(query.data.split('_')[2])
+    issues = get_issues(unresolved_only=False)
+    issue = next((i for i in issues if i['id'] == issue_id), None)
+    if not issue:
+        await query.edit_message_text("Проблема не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]]))
+        return
+
     resolve_issue(issue_id)
-    await query.edit_message_text("Проблема отмечена как решённая.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]]))
+
+    try:
+        await context.bot.send_message(
+            chat_id=issue['user_id'],
+            text="✅ Вашу проблему решили, спасибо за обращение!"
+        )
+        await query.edit_message_text(
+            "✅ Проблема решена, клиент уведомлён.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]])
+        )
+    except Exception as e:
+        await query.edit_message_text(
+            f"⚠️ Проблема отмечена как решённая, но не удалось уведомить клиента (ошибка: {e}).",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]])
+        )
 
 async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -662,8 +709,6 @@ def main():
     app.add_handler(CallbackQueryHandler(month_navigation, pattern="^month_"))
     app.add_handler(CallbackQueryHandler(day_selected, pattern="^day_"))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
-
     book_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
         states={
@@ -687,10 +732,20 @@ def main():
     )
     app.add_handler(book_conv)
 
-    add_barber_conv = ConversationHandler(entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")], states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
+    add_barber_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")],
+        states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]},
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
+        per_message=True,
+    )
     app.add_handler(add_barber_conv)
 
-    disable_day_conv = ConversationHandler(entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")], states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
+    disable_day_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")],
+        states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]},
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
+        per_message=True,
+    )
     app.add_handler(disable_day_conv)
 
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
@@ -710,6 +765,9 @@ def main():
     app.add_handler(CallbackQueryHandler(prices_callback, pattern="^prices$"))
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
+
+    # Обработчик проблемы должен идти ПОСЛЕ всех ConversationHandler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
     app.add_error_handler(error_handler)
     logger.info("Бот запущен")
