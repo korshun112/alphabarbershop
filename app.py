@@ -443,6 +443,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['disabling_day'] = False
         return
 
+    # Если сообщение не относится ни к одному из диалогов
+    await update.message.reply_text("Используйте, пожалуйста, кнопки меню.", reply_markup=main_menu_keyboard())
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
@@ -468,7 +471,6 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop(key, None)
     await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
 
-# ---------- ИСПРАВЛЕННАЯ КНОПКА "О НАС" ----------
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
