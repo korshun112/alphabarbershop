@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = "barbershop.db"
 user_last_issue = {}
+TIMEZONE = datetime.timezone(datetime.timedelta(hours=4))
+
+QUALIFICATION_ORDER = {"Топ-барбер": 1, "Про-барбер": 2, "Младший-барбер": 3}
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -41,10 +44,12 @@ def get_barbers(active_only=False):
     with get_db() as conn:
         cur = conn.cursor()
         if active_only:
-            cur.execute("SELECT * FROM barbers WHERE active=1 ORDER BY id")
+            cur.execute("SELECT * FROM barbers WHERE active=1")
         else:
-            cur.execute("SELECT * FROM barbers ORDER BY id")
-        return [dict(row) for row in cur.fetchall()]
+            cur.execute("SELECT * FROM barbers")
+        barbers = [dict(row) for row in cur.fetchall()]
+    barbers.sort(key=lambda b: (QUALIFICATION_ORDER.get(b['qualification'], 999), b['id']))
+    return barbers
 
 def get_appointments(date=None, status=None):
     with get_db() as conn:
@@ -95,7 +100,7 @@ def add_appointment(date, time, barber_id, client_name, client_phone, user_id):
         if cur.fetchone()[0] > 0:
             return None
         cur.execute("INSERT INTO appointments (date, time, barber_id, client_name, client_phone, user_id, created, status) VALUES (?,?,?,?,?,?,?,?)",
-                    (date, time, barber_id, client_name, client_phone, user_id, datetime.datetime.now().isoformat(), 'ожидает'))
+                    (date, time, barber_id, client_name, client_phone, user_id, datetime.datetime.now(TIMEZONE).isoformat(), 'ожидает'))
         conn.commit()
         return cur.lastrowid
 
@@ -105,10 +110,16 @@ def update_appointment_status(app_id, status):
         cur.execute("UPDATE appointments SET status=? WHERE id=?", (status, app_id))
         conn.commit()
 
+def delete_appointment(app_id):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM appointments WHERE id=?", (app_id,))
+        conn.commit()
+
 def add_issue(user_id, user_name, text):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO issues (user_id, user_name, text, timestamp) VALUES (?,?,?,?)", (user_id, user_name, text, datetime.datetime.now().isoformat()))
+        cur.execute("INSERT INTO issues (user_id, user_name, text, timestamp) VALUES (?,?,?,?)", (user_id, user_name, text, datetime.datetime.now(TIMEZONE).isoformat()))
         conn.commit()
         return cur.lastrowid
 
@@ -151,7 +162,12 @@ def is_working_day(date_str):
     return True
 
 def get_available_slots(date_str):
+    now = datetime.datetime.now(TIMEZONE)
+    today_str = now.strftime("%Y-%m-%d")
+    current_hour = now.hour
     slots = [f"{h:02d}:00" for h in range(10, 21)]
+    if date_str == today_str:
+        slots = [s for s in slots if int(s[:2]) > current_hour]
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT time FROM appointments WHERE date=? AND status NOT IN ('отменена', 'не пришел')", (date_str,))
@@ -161,7 +177,6 @@ def get_available_slots(date_str):
 def get_qualification_emoji(q):
     return {"Топ-барбер":"🏆", "Про-барбер":"⭐", "Младший-барбер":"✂️"}.get(q, "")
 
-# ---------- КЛАВИАТУРЫ ----------
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Меню", callback_data="menu")],
@@ -184,10 +199,9 @@ def back_to_menu_keyboard():
 def cancel_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
 
-# ---------- КАЛЕНДАРЬ ----------
 async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_offset=0):
     query = update.callback_query
-    today = datetime.datetime.now().date()
+    today = datetime.datetime.now(TIMEZONE).date()
     target_month = today.replace(day=1) + datetime.timedelta(days=month_offset*30)
     target_month = target_month.replace(day=1)
     year = target_month.year
@@ -232,7 +246,6 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     else:
         await update.effective_message.reply_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
 
-# ---------- ЗАПИСЬ (упрощённая версия с единым обработчиком) ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -249,7 +262,7 @@ async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['booking_date'] = date_str
     slots = get_available_slots(date_str)
     if not slots:
-        await query.edit_message_text("На этот день все время занято. Выберите другую дату.", reply_markup=back_to_menu_keyboard())
+        await query.edit_message_text("На этот день нет свободного времени. Выберите другую дату.", reply_markup=back_to_menu_keyboard())
         return
     keyboard = []
     row = []
@@ -269,7 +282,7 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_str = context.user_data['booking_date']
     slots = get_available_slots(date_str)
     if time_str not in slots:
-        await query.edit_message_text("⚠️ Это время уже занято. Выберите другое.", reply_markup=back_to_menu_keyboard())
+        await query.edit_message_text("⚠️ Это время уже занято или прошло. Выберите другое.", reply_markup=back_to_menu_keyboard())
         return
     barbers = get_barbers(active_only=True)
     if not barbers:
@@ -288,7 +301,7 @@ async def barber_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     barber_id = int(query.data.split('_')[1])
     context.user_data['booking_barber_id'] = barber_id
-    context.user_data['booking_step'] = 'name'   # шаг: ожидание имени
+    context.user_data['booking_step'] = 'name'
     await query.edit_message_text("Введите ваше имя (например, Иван):", reply_markup=cancel_keyboard())
 
 async def back_to_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -302,7 +315,7 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_str = context.user_data['booking_date']
     slots = get_available_slots(date_str)
     if not slots:
-        await query.edit_message_text("На этот день все время занято.", reply_markup=back_to_menu_keyboard())
+        await query.edit_message_text("На этот день нет свободного времени.", reply_markup=back_to_menu_keyboard())
         return
     keyboard = []
     row = []
@@ -317,23 +330,18 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data.pop('booking_date', None)
-    context.user_data.pop('booking_time', None)
-    context.user_data.pop('booking_barber_id', None)
-    context.user_data.pop('client_name', None)
-    context.user_data.pop('booking_step', None)
+    for key in ['booking_date', 'booking_time', 'booking_barber_id', 'client_name', 'booking_step']:
+        context.user_data.pop(key, None)
     await query.edit_message_text("Запись отменена.", reply_markup=main_menu_keyboard())
 
-# ---------- ЕДИНЫЙ ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text.strip()
     step = context.user_data.get('booking_step')
 
-    # Если есть активный шаг записи
     if step == 'name':
         if len(text) < 2:
-            await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
+            await update.message.reply_text("Имя должно содержать минимум 2 символа.", reply_markup=cancel_keyboard())
             return
         context.user_data['client_name'] = text
         context.user_data['booking_step'] = 'phone'
@@ -341,18 +349,17 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if step == 'phone':
-        # Валидация и нормализация телефона
-        phone = re.sub(r'[\s\-\(\)]', '', text)  # убираем пробелы, дефисы, скобки
+        phone = re.sub(r'[\s\-\(\)]', '', text)
         if re.match(r'^\+7\d{10}$', phone):
             phone = phone
         elif re.match(r'^8\d{10}$', phone):
             phone = '+7' + phone[1:]
         elif re.match(r'^7\d{10}$', phone):
             phone = '+7' + phone[1:]
-        elif re.match(r'^\d{10}$', phone):  # просто 10 цифр
+        elif re.match(r'^\d{10}$', phone):
             phone = '+7' + phone
         else:
-            await update.message.reply_text("Некорректный номер. Используйте формат +7XXXXXXXXXX (10 цифр после +7).", reply_markup=cancel_keyboard())
+            await update.message.reply_text("Неверный формат номера. Используйте +7XXXXXXXXXX.", reply_markup=cancel_keyboard())
             return
 
         date_str = context.user_data.get('booking_date')
@@ -360,20 +367,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         barber_id = context.user_data.get('booking_barber_id')
         client_name = context.user_data.get('client_name')
         if not all([date_str, time_str, barber_id, client_name]):
-            await update.message.reply_text("Что-то пошло не так. Начните запись заново.", reply_markup=main_menu_keyboard())
+            await update.message.reply_text("Ошибка данных. Начните запись заново.", reply_markup=main_menu_keyboard())
             context.user_data.pop('booking_step', None)
             return
 
-        # финальная проверка доступности слота
         slots = get_available_slots(date_str)
         if time_str not in slots:
-            await update.message.reply_text("⚠️ К сожалению, это время уже занято. Запись отменена.", reply_markup=main_menu_keyboard())
+            await update.message.reply_text("⚠️ Это время уже занято или прошло. Запись отменена.", reply_markup=main_menu_keyboard())
             context.user_data.pop('booking_step', None)
             return
 
         app_id = add_appointment(date_str, time_str, barber_id, client_name, phone, user.id)
         if app_id is None:
-            await update.message.reply_text("⚠️ Произошла ошибка при записи. Попробуйте позже.", reply_markup=main_menu_keyboard())
+            await update.message.reply_text("Ошибка записи. Попробуйте позже.", reply_markup=main_menu_keyboard())
             context.user_data.pop('booking_step', None)
             return
 
@@ -381,33 +387,26 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
         await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
         await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
-        # сброс всех флагов записи
-        context.user_data.pop('booking_step', None)
-        context.user_data.pop('booking_date', None)
-        context.user_data.pop('booking_time', None)
-        context.user_data.pop('booking_barber_id', None)
-        context.user_data.pop('client_name', None)
+        for key in ['booking_step', 'booking_date', 'booking_time', 'booking_barber_id', 'client_name']:
+            context.user_data.pop(key, None)
         return
 
-    # Если не в процессе записи, проверяем другие флаги (проблема, админ)
     if context.user_data.get('awaiting_issue', False):
-        # обработка проблемы
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(TIMEZONE)
         last_time = user_last_issue.get(user.id)
         if last_time and (now - last_time) < datetime.timedelta(minutes=30):
             remaining = int(30 - (now - last_time).total_seconds() // 60)
-            await update.message.reply_text(f"⚠️ Вы уже отправляли сообщение о проблеме. Повторить можно через {remaining} минут.")
+            await update.message.reply_text(f"⚠️ Повторить можно через {remaining} минут.")
             context.user_data['awaiting_issue'] = False
             return
         user_last_issue[user.id] = now
         add_issue(user.id, user.full_name, text)
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}")
-        await update.message.reply_text("Благодарим за обращение. Мы свяжемся с вами в ближайшее время.", reply_markup=main_menu_keyboard())
+        await update.message.reply_text("Спасибо, мы обработаем вашу проблему.", reply_markup=main_menu_keyboard())
         context.user_data['awaiting_issue'] = False
         return
 
     if context.user_data.get('adding_barber', False):
-        # добавление барбера
         parts = text.split(',')
         if len(parts) != 2:
             await update.message.reply_text("Неверный формат. Используйте: Имя, Квалификация", reply_markup=cancel_keyboard())
@@ -423,7 +422,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if context.user_data.get('disabling_day', False):
-        # отключение дня
         try:
             d = datetime.datetime.strptime(text, "%d.%m.%Y").date().strftime("%Y-%m-%d")
         except:
@@ -438,10 +436,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['disabling_day'] = False
         return
 
-    # Если ничего не подошло – игнорируем (или можно ответить подсказкой)
-    # await update.message.reply_text("Используйте кнопки меню.", reply_markup=main_menu_keyboard())
-
-# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
@@ -458,26 +452,13 @@ async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['awaiting_issue'] = True
-    await update.effective_message.reply_text(
-        "Опишите, с какой проблемой вы столкнулись.\n\n"
-        "Мы постараемся решить её как можно быстрее.\n"
-        "Отправьте ваше сообщение одним текстом:\n"
-        "(не чаще 1 раза в 30 минут)",
-        reply_markup=cancel_keyboard()
-    )
+    await update.effective_message.reply_text("Опишите проблему одним сообщением (не чаще 1 раза в 30 минут):", reply_markup=cancel_keyboard())
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Сброс всех флагов
-    context.user_data.pop('awaiting_issue', None)
-    context.user_data.pop('booking_step', None)
-    context.user_data.pop('booking_date', None)
-    context.user_data.pop('booking_time', None)
-    context.user_data.pop('booking_barber_id', None)
-    context.user_data.pop('client_name', None)
-    context.user_data.pop('adding_barber', None)
-    context.user_data.pop('disabling_day', None)
+    for key in ['awaiting_issue', 'booking_step', 'booking_date', 'booking_time', 'booking_barber_id', 'client_name', 'adding_barber', 'disabling_day']:
+        context.user_data.pop(key, None)
     await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
 
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,7 +517,6 @@ async def month_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['month_offset'] = offset
     await show_month(update, context, offset)
 
-# ---------- МОИ ЗАПИСИ ----------
 async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -571,7 +551,6 @@ async def cancel_appointment_client(update: Update, context: ContextTypes.DEFAUL
     await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Клиент {app['client_name']} отменил запись #{app_id} на {app['date']} {app['time']}.")
     await query.edit_message_text("✅ Ваша запись успешно отменена.", reply_markup=main_menu_keyboard())
 
-# ---------- АДМИН-ПАНЕЛЬ ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
@@ -617,6 +596,7 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton("✅ Пришёл", callback_data=f"app_status_{app_id}_пришел")],
         [InlineKeyboardButton("❌ Не пришёл", callback_data=f"app_status_{app_id}_не пришел")],
         [InlineKeyboardButton("🗑 Отменить запись", callback_data=f"admin_cancel_{app_id}")],
+        [InlineKeyboardButton("🗑 Удалить запись", callback_data=f"admin_delete_{app_id}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -624,11 +604,15 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
 async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    parts = query.data.split('_')
-    app_id = int(parts[2])
-    status = parts[3]
-    update_appointment_status(app_id, status)
-    await query.edit_message_text(f"Статус записи #{app_id} обновлён на '{status}'.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+    try:
+        parts = query.data.split('_')
+        app_id = int(parts[2])
+        status = parts[3]
+        update_appointment_status(app_id, status)
+        await query.edit_message_text(f"✅ Статус записи #{app_id} обновлён на '{status}'.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении статуса: {e}")
+        await query.edit_message_text("⚠️ Произошла ошибка. Попробуйте снова.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
 
 async def admin_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -651,6 +635,13 @@ async def admin_cancel_appointment(update: Update, context: ContextTypes.DEFAULT
     except:
         pass
     await query.edit_message_text("✅ Запись отменена, клиент уведомлён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+
+async def admin_delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    app_id = int(query.data.split('_')[2])
+    delete_appointment(app_id)
+    await query.edit_message_text("✅ Запись удалена из истории.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
 
 async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -808,6 +799,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_appointment_detail, pattern="^app_"))
     app.add_handler(CallbackQueryHandler(admin_update_status, pattern="^app_status_"))
     app.add_handler(CallbackQueryHandler(admin_cancel_appointment, pattern="^admin_cancel_"))
+    app.add_handler(CallbackQueryHandler(admin_delete_appointment, pattern="^admin_delete_"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber, pattern="^admin_toggle_barber$"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber_callback, pattern="^toggle_"))
     app.add_handler(CallbackQueryHandler(admin_enable_day_callback, pattern="^enable_"))
@@ -821,7 +813,6 @@ def main():
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
-    # Единый обработчик текстовых сообщений
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     app.add_error_handler(error_handler)
