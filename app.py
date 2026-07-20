@@ -1,12 +1,13 @@
 import os, logging, re, sqlite3, datetime
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,8 +75,13 @@ def init_db():
         cur.execute("SELECT COUNT(*) FROM reviews")
         if cur.fetchone()[0] == 0:
             cur.executemany("INSERT INTO reviews (name, text, rating) VALUES (?,?,?)", [
-                ("Иван", "Лучшая стрижка в городе! Обязательно вернусь.", 5),
-                ("Сергей", "Профессиональный подход и отличная атмосфера.", 5)
+                ("Иван", "Безупречный сервис, вернусь ещё.", 5),
+                ("Сергей", "Профессионально и с душой.", 5),
+                ("Алексей", "Отличный барбершоп, всегда доволен результатом.", 5),
+                ("Дмитрий", "Мастера знают своё дело, рекомендую.", 5),
+                ("Егор", "Приятная обстановка и качественная работа.", 5),
+                ("Антон", "Лучшее место для мужских стрижек в городе.", 5),
+                ("Кирилл", "Всегда вовремя, аккуратно и стильно.", 5)
             ])
         conn.commit()
 init_db()
@@ -188,7 +194,7 @@ def is_working_day(date_str):
     return True
 
 def get_available_slots(date_str):
-    slots = [f"{h:02d}:00" for h in range(10, 22)]
+    slots = [f"{h:02d}:00" for h in range(10, 21)]
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT time FROM appointments WHERE date=? AND status != 'не пришел'", (date_str,))
@@ -200,117 +206,149 @@ def get_qualification_emoji(q):
 
 DAY, TIME_SLOT, BARBER, CLIENT_NAME, CLIENT_PHONE = range(5)
 ADD_BARBER_STATE, DISABLE_DAY_STATE = range(6, 8)
+ISSUE_STATE = 8
+
+def main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📋 Меню", callback_data="menu")],
+        [InlineKeyboardButton("💬 Сообщить о проблеме", callback_data="issue")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def menu_options_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📅 Записаться", callback_data="book")],
+        [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
+        [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
+        [InlineKeyboardButton("⭐ Отзывы", callback_data="reviews")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def back_to_menu_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад в меню", callback_data="back_to_menu")]])
+
+def cancel_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️\n"
-        "🟢 *ДОБРО ПОЖАЛОВАТЬ В ALPHA* 🟢\n"
-        "🟡 *МУЖСКАЯ СТРИЖКА С ХАРАКТЕРОМ*\n"
-        "⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️\n\n"
-        "Мы создаём стиль, который подчёркивает вашу индивидуальность.\n"
-        "Лучшие мастера, премиальная атмосфера и только мужские стрижки.\n\n"
-        "Выберите действие:\n"
-        "─────────────────────\n"
-        "📋 *Меню* – запись, цены, о нас, отзывы\n"
-        "⚠️ *Сообщить о проблеме* – сообщить о баге или ошибке"
+        "Добро пожаловать в Alpha – пространство мужского стиля.\n\n"
+        "Мы создаём образы, в которых уверенность становится главным аксессуаром.\n"
+        "Лучшие мастера, безупречный сервис и только мужские стрижки.\n\n"
+        "Выберите действие:"
     )
-    keyboard = [[KeyboardButton("📋 Меню"), KeyboardButton("⚠️ Сообщить о проблеме")]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    if WELCOME_IMAGE_URL:
+        await update.message.reply_photo(photo=WELCOME_IMAGE_URL, caption=text, reply_markup=main_menu_keyboard())
+    else:
+        await update.message.reply_text(text, reply_markup=main_menu_keyboard())
 
-async def menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📅 Записаться на стрижку", callback_data="book")],
-        [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
-        [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
-        [InlineKeyboardButton("🌟 Отзывы", callback_data="reviews")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("⚫️ *ГЛАВНОЕ МЕНЮ* ⚫️\n\nВыберите интересующий раздел:", parse_mode='Markdown', reply_markup=reply_markup)
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
-async def issue_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "⚠️ *Сообщить о проблеме*\n\n"
-        "Опишите, с какой проблемой вы столкнулись при работе с ботом.\n"
-        "Мы постараемся решить её как можно быстрее.\n\n"
-        "Напишите ваше сообщение одним сообщением:"
+async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Опишите, с какой проблемой вы столкнулись.\n\n"
+        "Мы постараемся решить её как можно быстрее.\n"
+        "Отправьте ваше сообщение одним текстом:",
+        reply_markup=cancel_keyboard()
     )
-    return "ISSUE"
+    return ISSUE_STATE
 
-async def handle_issue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
     add_issue(user.id, user.full_name, text)
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=f"🆕 *Новая проблема*\nОт: {user.full_name}\nТекст: {text}", parse_mode='Markdown')
-    await update.message.reply_text("✅ Сообщение отправлено. Мы скоро его обработаем.")
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}"
+        )
+    await update.message.reply_text("Благодарим за обращение. Мы свяжемся с вами в ближайшее время.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = (
-        "ℹ️ *О BARBERSHOP ALPHA*\n\n"
-        "⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️\n"
-        "🟢 *Мужской стиль – наша философия*\n\n"
-        "Мы – премиальный барбершоп, где каждый клиент получает\n"
-        "индивидуальный подход и безупречный результат.\n\n"
-        "👔 *Наши мастера:*\n"
-        "🏆 *Топ-барберы* – эксперты с многолетним стажем, наставники\n"
-        "⭐ *Про-барберы* – профи высокого уровня\n"
-        "✂️ *Младшие-барберы* – талантливые специалисты, постоянно растущие\n\n"
-        "🏅 *Достижения:*\n"
-        "• Более 80 оценок 5⭐ на 2ГИС\n"
-        "• Наши топ-барберы принимают экзамены в университетах и колледжах\n"
-        "• Мы ищем талантливых мастеров для развития в нашей команде\n\n"
-        "📍 *Адрес:* г. Астрахань, Кировский район,\n"
-        "2-я Зеленгинская улица, корпус 3, 1 этаж\n"
-        "📶 Бесплатный Wi-Fi\n\n"
-        "🟡 *Работаем:* Пн–Вс, кроме вторника, с 10:00 до 21:00\n"
-        "─────────────────────\n"
-        "🔗 [Ссылка на 2ГИС](https://alpha.2gis.biz/)\n\n"
-        "Запись через бот или по телефону +7 (999) 123-45-67"
+        "О нас\n\n"
+        "Alpha – это не просто барбершоп, а место, где рождается стиль.\n"
+        "Наши мастера – профессионалы высочайшего уровня:\n"
+        "🏆 Топ-барберы – эксперты с многолетним стажем;\n"
+        "⭐ Про-барберы – мастера, знающие своё дело;\n"
+        "✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\n"
+        "Мы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\n"
+        "Наши топ-барберы принимают экзамены в ведущих учебных заведениях.\n"
+        "Мы всегда ищем талантливых мастеров для развития в нашей команде.\n\n"
+        "📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n"
+        "📶 Бесплатный Wi-Fi\n"
+        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n\n"
+        "🔗 [2ГИС](https://alpha.2gis.biz/)\n"
+        "📞 +7 (999) 123-45-67"
     )
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]]
-    await query.edit_message_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = (
-        "💈 *ПРАЙС-ЛИСТ*\n"
-        "⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️⚫️\n\n"
-        "*ТОП-БАРБЕР*\n"
+        "Прайс-лист\n\n"
+        "Топ-барбер\n"
         "Мужская стрижка .......... 900 ₽\n"
         "Стрижка + борода ......... 1400 ₽\n"
         "Стрижка бороды ........... 500 ₽\n\n"
-        "*ПРО-БАРБЕР*\n"
+        "Про-барбер\n"
         "Мужская стрижка .......... 800 ₽\n"
         "Стрижка + борода ......... 1300 ₽\n"
         "Стрижка бороды ........... 500 ₽\n\n"
-        "*МЛАДШИЙ-БАРБЕР*\n"
+        "Младший-барбер\n"
         "Мужская стрижка .......... 600 ₽\n"
         "Стрижка + борода ......... 1000 ₽\n"
         "Стрижка бороды ........... 400 ₽\n\n"
-        "*ДОП. УСЛУГИ*\n"
+        "Дополнительно\n"
         "Стрижка под машинку (1 насадка) ... 400 ₽\n"
         "Стрижка под машинку (2 насадки) ... 500 ₽\n"
-        "Королевское спитье ............... 600 ₽\n\n"
+        "Бритье ............................ 600 ₽\n\n"
         "Цены могут меняться, уточняйте у администратора."
     )
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]]
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
 
 async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     reviews = get_reviews()
-    text = "🌟 *ОТЗЫВЫ*\n\n"
-    for r in reviews:
-        text += f"⭐ {r['name']}: {r['text']}\n\n"
-    text += "Мы ценим каждого клиента и стремимся к совершенству!"
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]]
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    if not reviews:
+        text = "Пока нет отзывов. Будьте первым!"
+    else:
+        text = "⭐ *Отзывы наших клиентов*\n\n"
+        for r in reviews:
+            text += f"*{r['name']}*\n{r['text']}\n\n"
+        text += "Мы ценим каждого клиента!\n\n"
+        text += "📝 Оставить отзыв на 2ГИС: [Ссылка](https://alpha.2gis.biz/)"
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")],
+        [InlineKeyboardButton("📝 Оставить отзыв", url="https://alpha.2gis.biz/")]
+    ]
+    await query.edit_message_text(
+        text,
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
+
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Действие отменено.", reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
 
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -319,7 +357,7 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = [start_dt + datetime.timedelta(days=i) for i in range(14)]
     available = [d for d in days if is_working_day(d.strftime("%Y-%m-%d"))]
     if not available:
-        await query.edit_message_text("😔 В ближайшее время нет свободных дней для записи.")
+        await query.edit_message_text("К сожалению, в ближайшие дни нет свободных окон.", reply_markup=back_to_menu_keyboard())
         return ConversationHandler.END
     keyboard = []
     row = []
@@ -331,7 +369,7 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row); row = []
     if row: keyboard.append(row)
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
-    await query.edit_message_text("📅 *Выберите день:*", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("Выберите день для записи:", reply_markup=InlineKeyboardMarkup(keyboard))
     return DAY
 
 async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -339,12 +377,12 @@ async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     date_str = query.data.split('_')[1]
     if not is_working_day(date_str):
-        await query.edit_message_text("Извините, этот день недоступен для записи. Выберите другой.")
+        await query.edit_message_text("Этот день недоступен. Выберите другой.", reply_markup=back_to_menu_keyboard())
         return DAY
     context.user_data['date'] = date_str
     slots = get_available_slots(date_str)
     if not slots:
-        await query.edit_message_text("😔 На этот день все время уже занято. Выберите другую дату.")
+        await query.edit_message_text("На этот день все время занято. Выберите другую дату.", reply_markup=back_to_menu_keyboard())
         return DAY
     keyboard = []
     row = []
@@ -354,7 +392,7 @@ async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row); row = []
     if row: keyboard.append(row)
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
-    await query.edit_message_text(f"📅 *{datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}*\nВыберите удобное время:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
 async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -364,7 +402,7 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['time'] = time_str
     barbers = get_barbers(active_only=True)
     if not barbers:
-        await query.edit_message_text("😔 На данный момент нет свободных барберов. Попробуйте позже.")
+        await query.edit_message_text("Сейчас нет свободных барберов. Попробуйте позже.", reply_markup=back_to_menu_keyboard())
         return TIME_SLOT
     keyboard = []
     for b in barbers:
@@ -372,7 +410,7 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         label = f"{emoji} {b['name']} ({b['qualification']})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"barber_{b['id']}")])
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_slots")])
-    await query.edit_message_text("👤 *Выберите барбера:*", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("Выберите барбера:", reply_markup=InlineKeyboardMarkup(keyboard))
     return BARBER
 
 async def barber_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -380,22 +418,22 @@ async def barber_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     barber_id = int(query.data.split('_')[1])
     context.user_data['barber_id'] = barber_id
-    await query.edit_message_text("✍️ *Введите ваше имя:*\n(например, Иван)", parse_mode='Markdown')
+    await query.edit_message_text("Введите ваше имя (например, Иван):", reply_markup=cancel_keyboard())
     return CLIENT_NAME
 
 async def client_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
     if len(name) < 2:
-        await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).")
+        await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
         return CLIENT_NAME
     context.user_data['name'] = name
-    await update.message.reply_text("📞 *Введите ваш номер телефона:*\n(в формате +79991234567)", parse_mode='Markdown')
+    await update.message.reply_text("Введите номер телефона (например, +79991234567):", reply_markup=cancel_keyboard())
     return CLIENT_PHONE
 
 async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
     if not re.match(r'^\+?\d{10,15}$', phone):
-        await update.message.reply_text("Некорректный номер. Попробуйте снова (только цифры и +).")
+        await update.message.reply_text("Некорректный номер. Попробуйте снова.", reply_markup=cancel_keyboard())
         return CLIENT_PHONE
     date_str = context.user_data['date']
     time_str = context.user_data['time']
@@ -403,12 +441,12 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_name = context.user_data['name']
     add_appointment(date_str, time_str, barber_id, client_name, phone)
     barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
-    msg = (f"🟢 *НОВАЯ ЗАПИСЬ*\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}\nСтатус: ожидает")
+    msg = (f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}")
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=msg, parse_mode='Markdown')
+        await context.bot.send_message(chat_id=admin_id, text=msg)
     await update.message.reply_text(
-        "✅ *Запись успешно оформлена!*\n\nМы ждём вас в указанное время.\nАдрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.",
-        parse_mode='Markdown'
+        "✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.",
+        reply_markup=main_menu_keyboard()
     )
     return ConversationHandler.END
 
@@ -423,7 +461,7 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_str = context.user_data['date']
     slots = get_available_slots(date_str)
     if not slots:
-        await query.edit_message_text("😔 На этот день все время уже занято. Выберите другую дату.")
+        await query.edit_message_text("На этот день все время занято.", reply_markup=back_to_menu_keyboard())
         return DAY
     keyboard = []
     row = []
@@ -433,12 +471,12 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row); row = []
     if row: keyboard.append(row)
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
-    await query.edit_message_text(f"📅 *{datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}*\nВыберите удобное время:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("У вас нет доступа к админ-панели.")
+        await update.message.reply_text("Доступ запрещён.")
         return
     keyboard = [
         [InlineKeyboardButton("📅 Записи", callback_data="admin_appointments")],
@@ -447,24 +485,24 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("✅ Включить день", callback_data="admin_enable_day")],
         [InlineKeyboardButton("⚠️ Проблемы", callback_data="admin_issues")]
     ]
-    await update.message.reply_text("🔧 *АДМИН-ПАНЕЛЬ*\n\nВыберите действие:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     apps = get_appointments()
     if not apps:
-        await query.edit_message_text("📭 Нет записей.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
+        await query.edit_message_text("Нет записей.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
         return
-    text = "📋 *Записи*\n\n"
+    text = "Записи:\n\n"
     for a in apps:
         barber = next((b['name'] for b in get_barbers() if b['id'] == a['barber_id']), "неизвестен")
-        text += f"ID {a['id']} | {a['date']} {a['time']} | {a['client_name']} | {barber} | {a['status']}\n"
+        text += f"{a['id']} | {a['date']} {a['time']} | {a['client_name']} | {barber} | {a['status']}\n"
     keyboard = []
     for a in apps:
         keyboard.append([InlineKeyboardButton(f"{a['id']} - {a['client_name']}", callback_data=f"app_{a['id']}")])
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_back")])
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -473,16 +511,16 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
     apps = get_appointments()
     a = next((x for x in apps if x['id'] == app_id), None)
     if not a:
-        await query.edit_message_text("Запись не найдена.")
+        await query.edit_message_text("Запись не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
         return
     barber = next((b['name'] for b in get_barbers() if b['id'] == a['barber_id']), "неизвестен")
-    text = (f"📌 *Запись #{app_id}*\nКлиент: {a['client_name']}\nТелефон: {a['client_phone']}\nДата: {a['date']}\nВремя: {a['time']}\nБарбер: {barber}\nСтатус: {a['status']}")
+    text = (f"Запись #{app_id}\nКлиент: {a['client_name']}\nТелефон: {a['client_phone']}\nДата: {a['date']}\nВремя: {a['time']}\nБарбер: {barber}\nСтатус: {a['status']}")
     keyboard = [
         [InlineKeyboardButton("✅ Пришёл", callback_data=f"app_status_{app_id}_пришел")],
         [InlineKeyboardButton("❌ Не пришёл", callback_data=f"app_status_{app_id}_не пришел")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]
     ]
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -497,35 +535,35 @@ async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     barbers = get_barbers()
-    text = "👤 *Барберы*\n\n"
+    text = "Барберы:\n\n"
     for b in barbers:
-        text += f"{b['name']} ({b['qualification']}) – {'🟢 работает' if b['active'] else '🔴 не работает'}\n"
+        text += f"{b['name']} ({b['qualification']}) – {'работает' if b['active'] else 'не работает'}\n"
     keyboard = [
-        [InlineKeyboardButton("➕ Добавить барбера", callback_data="admin_add_barber")],
+        [InlineKeyboardButton("➕ Добавить", callback_data="admin_add_barber")],
         [InlineKeyboardButton("🔄 Переключить статус", callback_data="admin_toggle_barber")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]
     ]
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_add_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Введите имя и квалификацию нового барбера в формате:\n`Имя, Квалификация`\n(Квалификация: Топ-барбер, Про-барбер, Младший-барбер)", parse_mode='Markdown')
+    await query.edit_message_text("Введите имя и квалификацию в формате:\n`Имя, Квалификация`\n(доступно: Топ-барбер, Про-барбер, Младший-барбер)", parse_mode='Markdown', reply_markup=cancel_keyboard())
     return ADD_BARBER_STATE
 
 async def admin_add_barber_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     parts = text.split(',')
     if len(parts) != 2:
-        await update.message.reply_text("Неверный формат. Используйте: Имя, Квалификация")
+        await update.message.reply_text("Неверный формат. Используйте: Имя, Квалификация", reply_markup=cancel_keyboard())
         return ADD_BARBER_STATE
     name = parts[0].strip()
     qual = parts[1].strip()
     if qual not in ["Топ-барбер", "Про-барбер", "Младший-барбер"]:
-        await update.message.reply_text("Недопустимая квалификация. Доступны: Топ-барбер, Про-барбер, Младший-барбер")
+        await update.message.reply_text("Недопустимая квалификация.", reply_markup=cancel_keyboard())
         return ADD_BARBER_STATE
     add_barber(name, qual)
-    await update.message.reply_text(f"✅ Барбер {name} добавлен.")
+    await update.message.reply_text(f"✅ Барбер {name} добавлен.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
     return ConversationHandler.END
 
 async def admin_toggle_barber(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -544,12 +582,12 @@ async def admin_toggle_barber_callback(update: Update, context: ContextTypes.DEF
     await query.answer()
     barber_id = int(query.data.split('_')[1])
     toggle_barber(barber_id)
-    await query.edit_message_text("Статус барбера обновлён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
+    await query.edit_message_text("Статус обновлён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
 
 async def admin_disable_day_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Введите дату для отключения в формате ДД.ММ.ГГГГ (например, 15.07.2026):")
+    await query.edit_message_text("Введите дату для отключения в формате ДД.ММ.ГГГГ (например, 15.07.2026):", reply_markup=cancel_keyboard())
     return DISABLE_DAY_STATE
 
 async def admin_disable_day_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -557,13 +595,13 @@ async def admin_disable_day_text(update: Update, context: ContextTypes.DEFAULT_T
     try:
         d = datetime.datetime.strptime(text, "%d.%m.%Y").date().strftime("%Y-%m-%d")
     except:
-        await update.message.reply_text("Неверный формат. Используйте ДД.ММ.ГГГГ")
+        await update.message.reply_text("Неверный формат. Используйте ДД.ММ.ГГГГ", reply_markup=cancel_keyboard())
         return DISABLE_DAY_STATE
     if d in get_disabled_days():
-        await update.message.reply_text("Этот день уже отключён.")
+        await update.message.reply_text("Этот день уже отключён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
         return ConversationHandler.END
     disable_day(d)
-    await update.message.reply_text(f"✅ День {text} отключён для записи.")
+    await update.message.reply_text(f"✅ День {text} отключён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
     return ConversationHandler.END
 
 async def admin_enable_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -571,7 +609,7 @@ async def admin_enable_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     disabled = get_disabled_days()
     if not disabled:
-        await query.edit_message_text("Нет отключённых дней.")
+        await query.edit_message_text("Нет отключённых дней.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
         return
     keyboard = []
     for day in disabled:
@@ -591,16 +629,16 @@ async def admin_issues(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     issues = get_issues(unresolved_only=True)
     if not issues:
-        await query.edit_message_text("✅ Нет нерешённых проблем.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
+        await query.edit_message_text("Нет нерешённых проблем.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
         return
-    text = "⚠️ *Проблемы*\n\n"
+    text = "Проблемы:\n\n"
     for i in issues:
         text += f"ID {i['id']}: {i['user_name']} – {i['text'][:50]}...\n"
     keyboard = []
     for i in issues:
         keyboard.append([InlineKeyboardButton(f"ID {i['id']}", callback_data=f"issue_{i['id']}")])
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_back")])
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_issue_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -609,14 +647,14 @@ async def admin_issue_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
     issues = get_issues(unresolved_only=False)
     issue = next((i for i in issues if i['id'] == issue_id), None)
     if not issue:
-        await query.edit_message_text("Проблема не найдена.")
+        await query.edit_message_text("Проблема не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]]))
         return
     text = f"ID: {issue_id}\nОт: {issue['user_name']}\nТекст: {issue['text']}\nВремя: {issue['timestamp']}"
     keyboard = [
         [InlineKeyboardButton("✅ Решено", callback_data=f"issue_resolve_{issue_id}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_issues")]
     ]
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_issue_resolve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -635,21 +673,10 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("✅ Включить день", callback_data="admin_enable_day")],
         [InlineKeyboardButton("⚠️ Проблемы", callback_data="admin_issues")]
     ]
-    await query.edit_message_text("🔧 *АДМИН-ПАНЕЛЬ*\n\nВыберите действие:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("📅 Записаться", callback_data="book")],
-        [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
-        [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
-        [InlineKeyboardButton("🌟 Отзывы", callback_data="reviews")]
-    ]
-    await query.edit_message_text("⚫️ *ГЛАВНОЕ МЕНЮ* ⚫️\n\nВыберите раздел:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    logger.error(msg="Exception:", exc_info=context.error)
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -657,9 +684,18 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
-    app.add_handler(MessageHandler(filters.Regex("^📋 Меню$"), menu_button))
-    app.add_handler(MessageHandler(filters.Regex("^⚠️ Сообщить о проблеме$"), issue_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_issue))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
+    app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
+    app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
+
+    issue_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")],
+        states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]},
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
+        per_message=True,
+    )
+    app.add_handler(issue_conv)
 
     book_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
@@ -673,7 +709,8 @@ def main():
         fallbacks=[
             CallbackQueryHandler(back_to_days, pattern="^back_to_days$"),
             CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"),
-            CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$")
+            CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"),
+            CallbackQueryHandler(cancel_callback, pattern="^cancel$")
         ],
         per_message=True,
     )
@@ -682,7 +719,7 @@ def main():
     add_barber_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")],
         states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]},
-        fallbacks=[CommandHandler("admin", admin)],
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
         per_message=True,
     )
     app.add_handler(add_barber_conv)
@@ -690,7 +727,7 @@ def main():
     disable_day_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")],
         states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]},
-        fallbacks=[CommandHandler("admin", admin)],
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
         per_message=True,
     )
     app.add_handler(disable_day_conv)
