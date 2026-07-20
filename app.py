@@ -116,6 +116,13 @@ def delete_appointment(app_id):
         cur.execute("DELETE FROM appointments WHERE id=?", (app_id,))
         conn.commit()
 
+def delete_barber(barber_id):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM appointments WHERE barber_id=?", (barber_id,))
+        cur.execute("DELETE FROM barbers WHERE id=?", (barber_id,))
+        conn.commit()
+
 def add_issue(user_id, user_name, text):
     with get_db() as conn:
         cur = conn.cursor()
@@ -461,30 +468,53 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop(key, None)
     await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
 
+# ---------- ИСПРАВЛЕННАЯ КНОПКА "О НАС" ----------
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = "О нас\n\nAlpha – это не просто барбершоп, а место, где рождается стиль.\nНаши мастера – профессионалы высочайшего уровня:\n🏆 Топ-барберы – эксперты с многолетним стажем;\n⭐ Про-барберы – мастера, знающие своё дело;\n✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\nМы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\nНаши топ-барберы принимают экзамены в ведущих учебных заведениях.\nМы всегда ищем талантливых мастеров для развития в нашей команде.\n\n📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n📶 Бесплатный Wi-Fi\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n🔗 [2ГИС](https://alpha.2gis.biz/)"
+    await query.delete_message()
+    text = (
+        "О нас\n\n"
+        "Alpha – это не просто барбершоп, а место, где рождается стиль.\n"
+        "Наши мастера – профессионалы высочайшего уровня:\n"
+        "🏆 Топ-барберы – эксперты с многолетним стажем;\n"
+        "⭐ Про-барберы – мастера, знающие своё дело;\n"
+        "✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\n"
+        "Мы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\n"
+        "Наши топ-барберы принимают экзамены в ведущих учебных заведениях.\n"
+        "Мы всегда ищем талантливых мастеров для развития в нашей команде.\n\n"
+        "📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n"
+        "📶 Бесплатный Wi-Fi\n"
+        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n"
+        "📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n"
+        "🔗 [2ГИС](https://alpha.2gis.biz/)"
+    )
     if ABOUT_IMAGE_URL:
-        await update.effective_message.reply_photo(photo=ABOUT_IMAGE_URL, caption=text, reply_markup=back_to_menu_keyboard())
+        try:
+            await query.message.reply_photo(photo=ABOUT_IMAGE_URL, caption=text, reply_markup=back_to_menu_keyboard())
+        except Exception:
+            await query.message.reply_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
     else:
-        await update.effective_message.reply_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
+        await query.message.reply_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
 
 async def contacts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     text = "📞 *Контакты*\n\nСвяжитесь с нами по любым вопросам:\n\nМенеджеры:\n+7‒988‒591‒06‒58\n+7‒967‒338‒96‒69\n\n📍 Адрес: г. Астрахань, Кировский район,\n2-я Зеленгинская ул., корп. 3, 1 этаж\n\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00"
-    await update.effective_message.reply_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     text = "Прайс-лист\n\nТоп-барбер\nМужская стрижка .......... 900 ₽\nСтрижка + борода ......... 1400 ₽\nСтрижка бороды ........... 500 ₽\n\nПро-барбер\nМужская стрижка .......... 800 ₽\nСтрижка + борода ......... 1300 ₽\nСтрижка бороды ........... 500 ₽\n\nМладший-барбер\nМужская стрижка .......... 600 ₽\nСтрижка + борода ......... 1000 ₽\nСтрижка бороды ........... 400 ₽\n\nСтрижка под машинку (1 насадка) ... 400 ₽\nСтрижка под машинку (2 насадки) ... 500 ₽\n\nДоп. услуги\nКоролевское бритьё ............... 600 ₽\nГорячий воск ..................... 300 ₽\nПилинг кожи лица и головы ........ 350 ₽\nТонирование бороды ............... 450 ₽\nТонирование седины ............... 900 ₽\n\nЦены могут меняться, уточняйте у администратора."
-    await update.effective_message.reply_text(text, reply_markup=back_to_menu_keyboard())
+    await query.message.reply_text(text, reply_markup=back_to_menu_keyboard())
 
 async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     reviews = get_reviews()
     if not reviews:
         text = "Пока нет отзывов. Будьте первым!"
@@ -494,13 +524,14 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"*{r['name']}*\n{r['text']}\n\n"
         text += "Мы ценим каждого клиента!\n\n📝 Оставить отзыв на 2ГИС: [Ссылка](https://alpha.2gis.biz/)"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")], [InlineKeyboardButton("📝 Оставить отзыв", url="https://alpha.2gis.biz/")]]
-    await update.effective_message.reply_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.reply_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data.pop('awaiting_issue', None)
-    await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
+    await query.delete_message()
+    await query.message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -611,7 +642,7 @@ async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE
         if len(parts) != 3:
             await query.edit_message_text("⚠️ Неверный формат данных.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
             return
-        status_key = parts[1]  # prishel или ne_prishel
+        status_key = parts[1]
         app_id = int(parts[2])
         if status_key == "prishel":
             status = "пришел"
@@ -665,15 +696,33 @@ async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("➕ Добавить", callback_data="admin_add_barber")],
         [InlineKeyboardButton("🔄 Переключить статус", callback_data="admin_toggle_barber")],
+        [InlineKeyboardButton("🗑 Удалить барбера", callback_data="admin_delete_barber")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def admin_add_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_delete_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data['adding_barber'] = True
-    await query.edit_message_text("Введите имя и квалификацию в формате:\n`Имя, Квалификация`\n(доступно: Топ-барбер, Про-барбер, Младший-барбер)", parse_mode='Markdown', reply_markup=cancel_keyboard())
+    barbers = get_barbers(active_only=False)
+    if not barbers:
+        await query.edit_message_text("Нет барберов для удаления.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
+        return
+    text = "Выберите барбера для удаления:\n\n"
+    keyboard = []
+    for b in barbers:
+        status = "🟢" if b['active'] else "🔴"
+        text += f"{b['name']} ({b['qualification']}) – {status}\n"
+        keyboard.append([InlineKeyboardButton(f"🗑 {b['name']}", callback_data=f"delete_barber_{b['id']}")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_delete_barber_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    barber_id = int(query.data.split('_')[2])
+    delete_barber(barber_id)
+    await query.edit_message_text("✅ Барбер удалён, все его записи также удалены.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
 
 async def admin_toggle_barber(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -805,6 +854,8 @@ def main():
 
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
     app.add_handler(CallbackQueryHandler(admin_barbers, pattern="^admin_barbers$"))
+    app.add_handler(CallbackQueryHandler(admin_delete_barber_start, pattern="^admin_delete_barber$"))
+    app.add_handler(CallbackQueryHandler(admin_delete_barber_callback, pattern="^delete_barber_"))
     app.add_handler(CallbackQueryHandler(admin_enable_day, pattern="^admin_enable_day$"))
     app.add_handler(CallbackQueryHandler(admin_issues, pattern="^admin_issues$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
