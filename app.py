@@ -8,6 +8,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
+ABOUT_IMAGE_URL = os.getenv("ABOUT_IMAGE_URL", "")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -220,7 +221,8 @@ def menu_options_keyboard():
         [InlineKeyboardButton("📅 Записаться", callback_data="book")],
         [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
         [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
-        [InlineKeyboardButton("⭐ Отзывы", callback_data="reviews")]
+        [InlineKeyboardButton("⭐ Отзывы", callback_data="reviews")],
+        [InlineKeyboardButton("📞 Контакты", callback_data="contacts")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -285,11 +287,34 @@ async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Мы всегда ищем талантливых мастеров для развития в нашей команде.\n\n"
         "📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n"
         "📶 Бесплатный Wi-Fi\n"
-        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n\n"
-        "🔗 [2ГИС](https://alpha.2gis.biz/)\n"
-        "📞 +7 (999) 123-45-67"
+        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n"
+        "📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n"
+        "🔗 [2ГИС](https://alpha.2gis.biz/)"
     )
-    await query.edit_message_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
+    if ABOUT_IMAGE_URL:
+        await query.delete_message()
+        await update.effective_message.reply_photo(
+            photo=ABOUT_IMAGE_URL,
+            caption=text,
+            reply_markup=back_to_menu_keyboard()
+        )
+    else:
+        await query.edit_message_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
+
+async def contacts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = (
+        "📞 *Контакты*\n\n"
+        "Свяжитесь с нами по любым вопросам:\n\n"
+        "Менеджеры:\n"
+        "+7‒988‒591‒06‒58\n"
+        "+7‒967‒338‒96‒69\n\n"
+        "📍 Адрес: г. Астрахань, Кировский район,\n"
+        "2-я Зеленгинская ул., корп. 3, 1 этаж\n\n"
+        "🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00"
+    )
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -308,10 +333,14 @@ async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Мужская стрижка .......... 600 ₽\n"
         "Стрижка + борода ......... 1000 ₽\n"
         "Стрижка бороды ........... 400 ₽\n\n"
-        "Дополнительно\n"
         "Стрижка под машинку (1 насадка) ... 400 ₽\n"
-        "Стрижка под машинку (2 насадки) ... 500 ₽\n"
-        "Бритье ............................ 600 ₽\n\n"
+        "Стрижка под машинку (2 насадки) ... 500 ₽\n\n"
+        "Доп. услуги\n"
+        "Королевское бритьё ............... 600 ₽\n"
+        "Горячий воск ..................... 300 ₽\n"
+        "Пилинг кожи лица и головы ........ 350 ₽\n"
+        "Тонирование бороды ............... 450 ₽\n"
+        "Тонирование седины ............... 900 ₽\n\n"
         "Цены могут меняться, уточняйте у администратора."
     )
     await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
@@ -748,6 +777,7 @@ def main():
     app.add_handler(CallbackQueryHandler(about_callback, pattern="^about$"))
     app.add_handler(CallbackQueryHandler(prices_callback, pattern="^prices$"))
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
+    app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
     app.add_error_handler(error_handler)
 
