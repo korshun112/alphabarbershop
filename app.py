@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = "barbershop.db"
 
+user_last_issue = {}
+
 def get_db():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -175,22 +177,7 @@ def back_to_menu_keyboard():
 def cancel_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
 
-def get_month_days(year, month):
-    cal = calendar.monthcalendar(year, month)
-    days = []
-    for week in cal:
-        for day in week:
-            if day != 0:
-                d = datetime.date(year, month, day)
-                days.append(d)
-    return days
-
-def format_day_button(d):
-    weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    wd = weekdays[d.weekday()]
-    label = f"{wd} {d.day:02d}.{d.month:02d}"
-    return label
-
+# ---------- КАЛЕНДАРЬ С СЕТКОЙ 7xN ----------
 async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_offset=0):
     query = update.callback_query
     today = datetime.datetime.now().date()
@@ -199,24 +186,35 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     year = target_month.year
     month = target_month.month
 
-    days = get_month_days(year, month)
+    cal = calendar.monthcalendar(year, month)
     disabled = get_disabled_days()
 
     keyboard = []
-    row = []
-    for d in days:
-        date_str = d.strftime("%Y-%m-%d")
-        label = format_day_button(d)
-        if d.weekday() == 1 or date_str in disabled or d < today:
-            row.append(InlineKeyboardButton(f"🚫 {label}", callback_data="noop"))
-        else:
-            row.append(InlineKeyboardButton(label, callback_data=f"day_{date_str}"))
-        if len(row) == 4:
-            keyboard.append(row)
-            row = []
-    if row:
+
+    # Заголовки дней недели
+    weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    header_row = []
+    for wd in weekdays:
+        header_row.append(InlineKeyboardButton(wd, callback_data="noop"))
+    keyboard.append(header_row)
+
+    # Строки с днями
+    for week in cal:
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(" ", callback_data="noop"))
+            else:
+                d = datetime.date(year, month, day)
+                date_str = d.strftime("%Y-%m-%d")
+                label = f"{day:02d}"
+                if d.weekday() == 1 or date_str in disabled or d < today:
+                    row.append(InlineKeyboardButton(f"🚫{label}", callback_data="noop"))
+                else:
+                    row.append(InlineKeyboardButton(label, callback_data=f"day_{date_str}"))
         keyboard.append(row)
 
+    # Навигация
     nav_row = []
     nav_row.append(InlineKeyboardButton("◀️", callback_data=f"month_prev"))
     nav_row.append(InlineKeyboardButton(f"{month:02d}.{year}", callback_data="noop"))
@@ -226,10 +224,11 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     if query:
-        await query.edit_message_text(f"📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
+        await query.edit_message_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
     else:
-        await update.effective_message.reply_text(f"📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
+        await update.effective_message.reply_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
 
+# ---------- ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
@@ -245,16 +244,41 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await update.effective_message.reply_text("Опишите, с какой проблемой вы столкнулись.\n\nМы постараемся решить её как можно быстрее.\nОтправьте ваше сообщение одним текстом:", reply_markup=cancel_keyboard())
+    await update.effective_message.reply_text(
+        "Опишите, с какой проблемой вы столкнулись.\n\n"
+        "Мы постараемся решить её как можно быстрее.\n"
+        "Отправьте ваше сообщение одним текстом:\n"
+        "(не чаще 1 раза в 30 минут)",
+        reply_markup=cancel_keyboard()
+    )
     return ISSUE_STATE
 
 async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    user_id = user.id
+    now = datetime.datetime.now()
+    last_time = user_last_issue.get(user_id)
+    if last_time and (now - last_time) < datetime.timedelta(minutes=30):
+        remaining = int(30 - (now - last_time).total_seconds() // 60)
+        await update.message.reply_text(
+            f"⚠️ Вы уже отправляли сообщение о проблеме. Повторить можно через {remaining} минут."
+        )
+        return ConversationHandler.END
+
+    user_last_issue[user_id] = now
     text = update.message.text
-    add_issue(user.id, user.full_name, text)
+    add_issue(user_id, user.full_name, text)
+
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}")
-    await update.message.reply_text("Благодарим за обращение. Мы свяжемся с вами в ближайшее время.", reply_markup=main_menu_keyboard())
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}"
+        )
+
+    await update.message.reply_text(
+        "Благодарим за обращение. Мы свяжемся с вами в ближайшее время.",
+        reply_markup=main_menu_keyboard()
+    )
     return ConversationHandler.END
 
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,6 +327,7 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
+# ---------- ДИАЛОГ ЗАПИСИ ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -424,6 +449,7 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
+# ---------- АДМИН-ПАНЕЛЬ ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("Доступ запрещён.")
@@ -632,15 +658,20 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
+
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
-    app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
     app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))
     app.add_handler(CallbackQueryHandler(month_navigation, pattern="^month_"))
     app.add_handler(CallbackQueryHandler(day_selected, pattern="^day_"))
 
-    issue_conv = ConversationHandler(entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")], states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]}, fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")], per_message=True)
+    issue_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")],
+        states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]},
+        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
+        per_message=True,
+    )
     app.add_handler(issue_conv)
 
     book_conv = ConversationHandler(
