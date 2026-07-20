@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
 ABOUT_IMAGE_URL = os.getenv("ABOUT_IMAGE_URL", "")
 
@@ -13,8 +13,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 DB_FILE = "barbershop.db"
-
-# Словарь для хранения времени последнего сообщения о проблеме (лимит 30 мин)
 user_last_issue = {}
 
 def get_db():
@@ -177,7 +175,6 @@ def back_to_menu_keyboard():
 def cancel_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
 
-# ---------- КАЛЕНДАРЬ С СЕТКОЙ 7xN ----------
 async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_offset=0):
     query = update.callback_query
     today = datetime.datetime.now().date()
@@ -190,7 +187,6 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     disabled = get_disabled_days()
 
     keyboard = []
-
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     header_row = []
     for wd in weekdays:
@@ -212,10 +208,11 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
                     row.append(InlineKeyboardButton(label, callback_data=f"day_{date_str}"))
         keyboard.append(row)
 
-    nav_row = []
-    nav_row.append(InlineKeyboardButton("◀️", callback_data=f"month_prev"))
-    nav_row.append(InlineKeyboardButton(f"{month:02d}.{year}", callback_data="noop"))
-    nav_row.append(InlineKeyboardButton("▶️", callback_data=f"month_next"))
+    nav_row = [
+        InlineKeyboardButton("◀️", callback_data="month_prev"),
+        InlineKeyboardButton(f"{month:02d}.{year}", callback_data="noop"),
+        InlineKeyboardButton("▶️", callback_data="month_next")
+    ]
     keyboard.append(nav_row)
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
 
@@ -225,7 +222,6 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     else:
         await update.effective_message.reply_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
 
-# ---------- ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
@@ -238,11 +234,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
-# ---------- НОВАЯ ЛОГИКА "СООБЩИТЬ О ПРОБЛЕМЕ" (БЕЗ ConversationHandler) ----------
 async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Устанавливаем флаг, что пользователь хочет отправить проблему
     context.user_data['awaiting_issue'] = True
     await update.effective_message.reply_text(
         "Опишите, с какой проблемой вы столкнулись.\n\n"
@@ -258,14 +252,11 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_issue'] = False
     await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
 
-# Обработчик текстовых сообщений для проблемы
 async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
 
-    # Проверяем, ожидает ли пользователь отправки проблемы
     if not context.user_data.get('awaiting_issue', False):
-        # Если не ожидает, просто игнорируем или можем ответить, но лучше игнорировать
         return
 
     now = datetime.datetime.now()
@@ -275,30 +266,24 @@ async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             f"⚠️ Вы уже отправляли сообщение о проблеме. Повторить можно через {remaining} минут."
         )
-        # Сбрасываем флаг, чтобы не циклилось
         context.user_data['awaiting_issue'] = False
         return
 
-    # Сохраняем время и сообщение
     user_last_issue[user_id] = now
     text = update.message.text
     add_issue(user_id, user.full_name, text)
 
-    # Отправляем уведомление админам
-    for admin_id in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}"
-        )
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"🆕 Новая проблема\nОт: {user.full_name}\nТекст: {text}"
+    )
 
     await update.message.reply_text(
         "Благодарим за обращение. Мы свяжемся с вами в ближайшее время.",
         reply_markup=main_menu_keyboard()
     )
-    # Сбрасываем флаг
     context.user_data['awaiting_issue'] = False
 
-# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -337,10 +322,9 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data['awaiting_issue'] = False  # сброс на всякий случай
+    context.user_data['awaiting_issue'] = False
     await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
-# ---------- ДИАЛОГ ЗАПИСИ ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -433,8 +417,7 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_appointment(date_str, time_str, barber_id, client_name, phone)
     barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
     msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
-    for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=msg)
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)  # отправляем одному админу
     await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
@@ -462,9 +445,8 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
-# ---------- АДМИН-ПАНЕЛЬ ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
         return
     keyboard = [
@@ -672,7 +654,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
-    # Обработчики кнопок (без дублирования issue)
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
     app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
@@ -681,10 +662,8 @@ def main():
     app.add_handler(CallbackQueryHandler(month_navigation, pattern="^month_"))
     app.add_handler(CallbackQueryHandler(day_selected, pattern="^day_"))
 
-    # Обработчик для текстовых сообщений (проблема) – должен идти перед другими текстовыми
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
-    # Диалог записи
     book_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
         states={
