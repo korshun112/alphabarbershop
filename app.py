@@ -185,12 +185,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
+    await query.delete_message()
+    await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
 async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Опишите, с какой проблемой вы столкнулись.\n\nМы постараемся решить её как можно быстрее.\nОтправьте ваше сообщение одним текстом:", reply_markup=cancel_keyboard())
+    await query.delete_message()
+    await update.effective_message.reply_text("Опишите, с какой проблемой вы столкнулись.\n\nМы постараемся решить её как можно быстрее.\nОтправьте ваше сообщение одним текстом:", reply_markup=cancel_keyboard())
     return ISSUE_STATE
 
 async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,28 +207,31 @@ async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     text = "О нас\n\nAlpha – это не просто барбершоп, а место, где рождается стиль.\nНаши мастера – профессионалы высочайшего уровня:\n🏆 Топ-барберы – эксперты с многолетним стажем;\n⭐ Про-барберы – мастера, знающие своё дело;\n✂️ Младшие-барберы – талантливые специалисты, которые постоянно совершенствуются.\n\nМы гордимся более чем 80 отзывами с оценкой 5⭐ на 2ГИС.\nНаши топ-барберы принимают экзамены в ведущих учебных заведениях.\nМы всегда ищем талантливых мастеров для развития в нашей команде.\n\n📍 Адрес: г. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж\n📶 Бесплатный Wi-Fi\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00\n📞 Менеджеры: +7‒988‒591‒06‒58, +7‒967‒338‒96‒69\n\n🔗 [2ГИС](https://alpha.2gis.biz/)"
     if ABOUT_IMAGE_URL:
-        await query.delete_message()
         await update.effective_message.reply_photo(photo=ABOUT_IMAGE_URL, caption=text, reply_markup=back_to_menu_keyboard())
     else:
-        await query.edit_message_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
+        await update.effective_message.reply_text(text, disable_web_page_preview=True, reply_markup=back_to_menu_keyboard())
 
 async def contacts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     text = "📞 *Контакты*\n\nСвяжитесь с нами по любым вопросам:\n\nМенеджеры:\n+7‒988‒591‒06‒58\n+7‒967‒338‒96‒69\n\n📍 Адрес: г. Астрахань, Кировский район,\n2-я Зеленгинская ул., корп. 3, 1 этаж\n\n🕒 Работаем: пн–вс, кроме вторника, с 09:30 до 20:00"
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
+    await update.effective_message.reply_text(text, parse_mode='Markdown', reply_markup=back_to_menu_keyboard())
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     text = "Прайс-лист\n\nТоп-барбер\nМужская стрижка .......... 900 ₽\nСтрижка + борода ......... 1400 ₽\nСтрижка бороды ........... 500 ₽\n\nПро-барбер\nМужская стрижка .......... 800 ₽\nСтрижка + борода ......... 1300 ₽\nСтрижка бороды ........... 500 ₽\n\nМладший-барбер\nМужская стрижка .......... 600 ₽\nСтрижка + борода ......... 1000 ₽\nСтрижка бороды ........... 400 ₽\n\nСтрижка под машинку (1 насадка) ... 400 ₽\nСтрижка под машинку (2 насадки) ... 500 ₽\n\nДоп. услуги\nКоролевское бритьё ............... 600 ₽\nГорячий воск ..................... 300 ₽\nПилинг кожи лица и головы ........ 350 ₽\nТонирование бороды ............... 450 ₽\nТонирование седины ............... 900 ₽\n\nЦены могут меняться, уточняйте у администратора."
-    await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
+    await update.effective_message.reply_text(text, reply_markup=back_to_menu_keyboard())
 
 async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
     reviews = get_reviews()
     if not reviews:
         text = "Пока нет отзывов. Будьте первым!"
@@ -236,19 +241,22 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"*{r['name']}*\n{r['text']}\n\n"
         text += "Мы ценим каждого клиента!\n\n📝 Оставить отзыв на 2ГИС: [Ссылка](https://alpha.2gis.biz/)"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")], [InlineKeyboardButton("📝 Оставить отзыв", url="https://alpha.2gis.biz/")]]
-    await query.edit_message_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.effective_message.reply_text(text, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
+    await query.delete_message()
+    await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Действие отменено.", reply_markup=main_menu_keyboard())
+    await query.delete_message()
+    await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
+# ---------- ДИАЛОГ ЗАПИСИ (оставляем edit_message_text, так как отправляем только текстовые сообщения) ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -370,6 +378,7 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
+# ---------- АДМИН-ПАНЕЛЬ (без изменений, но тоже лучше переделать на удаление, но оставим edit для единообразия) ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("Доступ запрещён.")
