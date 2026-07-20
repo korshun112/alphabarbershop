@@ -443,7 +443,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['disabling_day'] = False
         return
 
-    # Если сообщение не относится ни к одному из диалогов
     await update.message.reply_text("Используйте, пожалуйста, кнопки меню.", reply_markup=main_menu_keyboard())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -703,6 +702,12 @@ async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def admin_add_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['adding_barber'] = True
+    await query.edit_message_text("Введите имя и квалификацию в формате:\n`Имя, Квалификация`\n(доступно: Топ-барбер, Про-барбер, Младший-барбер)", parse_mode='Markdown', reply_markup=cancel_keyboard())
+
 async def admin_delete_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -856,6 +861,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
     app.add_handler(CallbackQueryHandler(admin_barbers, pattern="^admin_barbers$"))
+    app.add_handler(CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$"))
     app.add_handler(CallbackQueryHandler(admin_delete_barber_start, pattern="^admin_delete_barber$"))
     app.add_handler(CallbackQueryHandler(admin_delete_barber_callback, pattern="^delete_barber_"))
     app.add_handler(CallbackQueryHandler(admin_enable_day, pattern="^admin_enable_day$"))
@@ -870,7 +876,6 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_enable_day_callback, pattern="^enable_"))
     app.add_handler(CallbackQueryHandler(admin_issue_detail, pattern=r"^issue_\d+$"))
     app.add_handler(CallbackQueryHandler(admin_issue_resolve, pattern="^issue_resolve_"))
-    app.add_handler(CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$"))
     app.add_handler(CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$"))
 
     app.add_handler(CallbackQueryHandler(about_callback, pattern="^about$"))
