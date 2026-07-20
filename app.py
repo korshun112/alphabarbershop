@@ -85,7 +85,6 @@ def get_reviews():
 def add_appointment(date, time, barber_id, client_name, client_phone):
     with get_db() as conn:
         cur = conn.cursor()
-        # Проверяем, не занято ли уже это время (на случай гонки)
         cur.execute("SELECT COUNT(*) FROM appointments WHERE date=? AND time=? AND status != 'не пришел'", (date, time))
         if cur.fetchone()[0] > 0:
             return None
@@ -419,7 +418,6 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     barber_id = context.user_data['barber_id']
     client_name = context.user_data['name']
 
-    # Проверяем, не занято ли уже это время (гонка)
     slots = get_available_slots(date_str)
     if time_str not in slots:
         await update.message.reply_text(
@@ -428,7 +426,6 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # Сохраняем запись
     app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
     if app_id is None:
         await update.message.reply_text(
@@ -471,7 +468,6 @@ async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
     return TIME_SLOT
 
-# ---------- АДМИН-ПАНЕЛЬ (без изменений) ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
@@ -758,7 +754,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_toggle_barber, pattern="^admin_toggle_barber$"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber_callback, pattern="^toggle_"))
     app.add_handler(CallbackQueryHandler(admin_enable_day_callback, pattern="^enable_"))
-    app.add_handler(CallbackQueryHandler(admin_issue_detail, pattern="^issue_"))
+    app.add_handler(CallbackQueryHandler(admin_issue_detail, pattern=r"^issue_\d+$"))
     app.add_handler(CallbackQueryHandler(admin_issue_resolve, pattern="^issue_resolve_"))
 
     app.add_handler(CallbackQueryHandler(about_callback, pattern="^about$"))
@@ -766,7 +762,6 @@ def main():
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
-    # Обработчик проблемы должен идти ПОСЛЕ всех ConversationHandler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
     app.add_error_handler(error_handler)
