@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 DB_FILE = "barbershop.db"
+
 def get_db():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -180,14 +181,14 @@ def enable_day(date):
 
 def is_working_day(date_str):
     d = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
-    if d.weekday() == 1:  # вторник
+    if d.weekday() == 1:
         return False
     if date_str in get_disabled_days():
         return False
     return True
 
 def get_available_slots(date_str):
-    slots = [f"{h:02d}:00" for h in range(10, 22)]  # 10:00 - 21:00
+    slots = [f"{h:02d}:00" for h in range(10, 22)]
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT time FROM appointments WHERE date=? AND status != 'не пришел'", (date_str,))
@@ -239,9 +240,9 @@ async def issue_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_issue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
-    issue_id = add_issue(user.id, user.full_name, text)
+    add_issue(user.id, user.full_name, text)
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(chat_id=admin_id, text=f"🆕 *Новая проблема*\nОт: {user.full_name}\nТекст: {text}")
+        await context.bot.send_message(chat_id=admin_id, text=f"🆕 *Новая проблема*\nОт: {user.full_name}\nТекст: {text}", parse_mode='Markdown')
     await update.message.reply_text("✅ Сообщение отправлено. Мы скоро его обработаем.")
     return ConversationHandler.END
 
@@ -314,7 +315,6 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # формируем доступные дни на 14 дней
     start_dt = datetime.datetime.now().date()
     days = [start_dt + datetime.timedelta(days=i) for i in range(14)]
     available = [d for d in days if is_working_day(d.strftime("%Y-%m-%d"))]
@@ -401,7 +401,7 @@ async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = context.user_data['time']
     barber_id = context.user_data['barber_id']
     client_name = context.user_data['name']
-    app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
+    add_appointment(date_str, time_str, barber_id, client_name, phone)
     barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
     msg = (f"🟢 *НОВАЯ ЗАПИСЬ*\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}\nСтатус: ожидает")
     for admin_id in ADMIN_IDS:
@@ -628,19 +628,25 @@ async def admin_issue_resolve(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin(update, context)  
+    keyboard = [
+        [InlineKeyboardButton("📅 Записи", callback_data="admin_appointments")],
+        [InlineKeyboardButton("👤 Барберы", callback_data="admin_barbers")],
+        [InlineKeyboardButton("🚫 Отключить день", callback_data="admin_disable_day")],
+        [InlineKeyboardButton("✅ Включить день", callback_data="admin_enable_day")],
+        [InlineKeyboardButton("⚠️ Проблемы", callback_data="admin_issues")]
+    ]
+    await query.edit_message_text("🔧 *АДМИН-ПАНЕЛЬ*\n\nВыберите действие:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Возврат в главное меню...")
     keyboard = [
         [InlineKeyboardButton("📅 Записаться", callback_data="book")],
         [InlineKeyboardButton("ℹ️ О нас", callback_data="about")],
         [InlineKeyboardButton("💈 Прайс-лист", callback_data="prices")],
         [InlineKeyboardButton("🌟 Отзывы", callback_data="reviews")]
     ]
-    await update.effective_message.reply_text("⚫️ *ГЛАВНОЕ МЕНЮ* ⚫️\n\nВыберите раздел:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("⚫️ *ГЛАВНОЕ МЕНЮ* ⚫️\n\nВыберите раздел:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -653,7 +659,6 @@ def main():
 
     app.add_handler(MessageHandler(filters.Regex("^📋 Меню$"), menu_button))
     app.add_handler(MessageHandler(filters.Regex("^⚠️ Сообщить о проблеме$"), issue_button))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_issue))
 
     book_conv = ConversationHandler(
@@ -665,9 +670,11 @@ def main():
             CLIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_name)],
             CLIENT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_phone)],
         },
-        fallbacks=[CallbackQueryHandler(back_to_days, pattern="^back_to_days$"),
-                   CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"),
-                   CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$")],
+        fallbacks=[
+            CallbackQueryHandler(back_to_days, pattern="^back_to_days$"),
+            CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"),
+            CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$")
+        ],
         per_message=True,
     )
     app.add_handler(book_conv)
@@ -688,11 +695,6 @@ def main():
     )
     app.add_handler(disable_day_conv)
 
-    admin_patterns = [
-        "admin_appointments", "admin_barbers", "admin_enable_day", "admin_issues",
-        "admin_back", "app_", "app_status_", "admin_toggle_barber", "toggle_",
-        "enable_", "issue_", "issue_resolve_"
-    ]
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
     app.add_handler(CallbackQueryHandler(admin_barbers, pattern="^admin_barbers$"))
     app.add_handler(CallbackQueryHandler(admin_enable_day, pattern="^admin_enable_day$"))
@@ -709,8 +711,6 @@ def main():
     app.add_handler(CallbackQueryHandler(about_callback, pattern="^about$"))
     app.add_handler(CallbackQueryHandler(prices_callback, pattern="^prices$"))
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
-
-    app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
 
     app.add_error_handler(error_handler)
 
