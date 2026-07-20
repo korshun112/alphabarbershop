@@ -8,6 +8,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
+WELCOME_IMAGE_URL_2 = os.getenv("WELCOME_IMAGE_URL_2", "")
 ABOUT_IMAGE_URL = os.getenv("ABOUT_IMAGE_URL", "")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -243,6 +244,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=WELCOME_IMAGE_URL, caption=text, reply_markup=main_menu_keyboard())
     else:
         await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+    if WELCOME_IMAGE_URL_2:
+        await update.message.reply_photo(photo=WELCOME_IMAGE_URL_2)
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
