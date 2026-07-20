@@ -593,8 +593,8 @@ async def admin_appointment_detail(update: Update, context: ContextTypes.DEFAULT
     barber = next((b['name'] for b in get_barbers() if b['id'] == a['barber_id']), "неизвестен")
     text = f"Запись #{app_id}\nКлиент: {a['client_name']}\nТелефон: {a['client_phone']}\nДата: {a['date']}\nВремя: {a['time']}\nБарбер: {barber}\nСтатус: {a['status']}"
     keyboard = [
-        [InlineKeyboardButton("✅ Пришёл", callback_data=f"app_status_{app_id}_пришел")],
-        [InlineKeyboardButton("❌ Не пришёл", callback_data=f"app_status_{app_id}_не пришел")],
+        [InlineKeyboardButton("✅ Пришёл", callback_data=f"status_prishel_{app_id}")],
+        [InlineKeyboardButton("❌ Не пришёл", callback_data=f"status_ne_prishel_{app_id}")],
         [InlineKeyboardButton("🗑 Отменить запись", callback_data=f"admin_cancel_{app_id}")],
         [InlineKeyboardButton("🗑 Удалить запись", callback_data=f"admin_delete_{app_id}")],
         [InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]
@@ -605,9 +605,21 @@ async def admin_update_status(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     try:
-        parts = query.data.split('_')
+        data = query.data
+        logger.info(f"Получен callback: {data}")
+        parts = data.split('_')
+        if len(parts) != 3:
+            await query.edit_message_text("⚠️ Неверный формат данных.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+            return
+        status_key = parts[1]  # prishel или ne_prishel
         app_id = int(parts[2])
-        status = parts[3]
+        if status_key == "prishel":
+            status = "пришел"
+        elif status_key == "ne_prishel":
+            status = "не пришел"
+        else:
+            await query.edit_message_text("⚠️ Неизвестный статус.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
+            return
         update_appointment_status(app_id, status)
         await query.edit_message_text(f"✅ Статус записи #{app_id} обновлён на '{status}'.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_appointments")]]))
     except Exception as e:
@@ -797,7 +809,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_issues, pattern="^admin_issues$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_appointment_detail, pattern="^app_"))
-    app.add_handler(CallbackQueryHandler(admin_update_status, pattern="^app_status_"))
+    app.add_handler(CallbackQueryHandler(admin_update_status, pattern="^status_prishel_|^status_ne_prishel_"))
     app.add_handler(CallbackQueryHandler(admin_cancel_appointment, pattern="^admin_cancel_"))
     app.add_handler(CallbackQueryHandler(admin_delete_appointment, pattern="^admin_delete_"))
     app.add_handler(CallbackQueryHandler(admin_toggle_barber, pattern="^admin_toggle_barber$"))
