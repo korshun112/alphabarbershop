@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = "barbershop.db"
 
+# Словарь для хранения времени последнего сообщения о проблеме (лимит 30 мин)
 user_last_issue = {}
 
 def get_db():
@@ -154,7 +155,6 @@ def get_qualification_emoji(q):
 
 DAY, TIME_SLOT, BARBER, CLIENT_NAME, CLIENT_PHONE = range(5)
 ADD_BARBER_STATE, DISABLE_DAY_STATE = range(6, 8)
-ISSUE_STATE = 8
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
@@ -191,14 +191,12 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
 
     keyboard = []
 
-    # Заголовки дней недели
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     header_row = []
     for wd in weekdays:
         header_row.append(InlineKeyboardButton(wd, callback_data="noop"))
     keyboard.append(header_row)
 
-    # Строки с днями
     for week in cal:
         row = []
         for day in week:
@@ -214,7 +212,6 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
                     row.append(InlineKeyboardButton(label, callback_data=f"day_{date_str}"))
         keyboard.append(row)
 
-    # Навигация
     nav_row = []
     nav_row.append(InlineKeyboardButton("◀️", callback_data=f"month_prev"))
     nav_row.append(InlineKeyboardButton(f"{month:02d}.{year}", callback_data="noop"))
@@ -241,9 +238,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
+# ---------- НОВАЯ ЛОГИКА "СООБЩИТЬ О ПРОБЛЕМЕ" (БЕЗ ConversationHandler) ----------
 async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    # Устанавливаем флаг, что пользователь хочет отправить проблему
+    context.user_data['awaiting_issue'] = True
     await update.effective_message.reply_text(
         "Опишите, с какой проблемой вы столкнулись.\n\n"
         "Мы постараемся решить её как можно быстрее.\n"
@@ -251,11 +251,23 @@ async def issue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(не чаще 1 раза в 30 минут)",
         reply_markup=cancel_keyboard()
     )
-    return ISSUE_STATE
 
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['awaiting_issue'] = False
+    await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
+
+# Обработчик текстовых сообщений для проблемы
 async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+
+    # Проверяем, ожидает ли пользователь отправки проблемы
+    if not context.user_data.get('awaiting_issue', False):
+        # Если не ожидает, просто игнорируем или можем ответить, но лучше игнорировать
+        return
+
     now = datetime.datetime.now()
     last_time = user_last_issue.get(user_id)
     if last_time and (now - last_time) < datetime.timedelta(minutes=30):
@@ -263,12 +275,16 @@ async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             f"⚠️ Вы уже отправляли сообщение о проблеме. Повторить можно через {remaining} минут."
         )
-        return ConversationHandler.END
+        # Сбрасываем флаг, чтобы не циклилось
+        context.user_data['awaiting_issue'] = False
+        return
 
+    # Сохраняем время и сообщение
     user_last_issue[user_id] = now
     text = update.message.text
     add_issue(user_id, user.full_name, text)
 
+    # Отправляем уведомление админам
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(
             chat_id=admin_id,
@@ -279,8 +295,10 @@ async def issue_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Благодарим за обращение. Мы свяжемся с вами в ближайшее время.",
         reply_markup=main_menu_keyboard()
     )
-    return ConversationHandler.END
+    # Сбрасываем флаг
+    context.user_data['awaiting_issue'] = False
 
+# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -319,13 +337,8 @@ async def reviews_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    context.user_data['awaiting_issue'] = False  # сброс на всякий случай
     await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
-
-async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await update.effective_message.reply_text("Действие отменено.", reply_markup=main_menu_keyboard())
-    return ConversationHandler.END
 
 # ---------- ДИАЛОГ ЗАПИСИ ----------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,21 +672,19 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
+    # Обработчики кнопок (без дублирования issue)
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
     app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))
     app.add_handler(CallbackQueryHandler(month_navigation, pattern="^month_"))
     app.add_handler(CallbackQueryHandler(day_selected, pattern="^day_"))
 
-    issue_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(issue_callback, pattern="^issue$")],
-        states={ISSUE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
-    app.add_handler(issue_conv)
+    # Обработчик для текстовых сообщений (проблема) – должен идти перед другими текстовыми
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
+    # Диалог записи
     book_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
         states={
