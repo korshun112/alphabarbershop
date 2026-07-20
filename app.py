@@ -154,9 +154,6 @@ def get_available_slots(date_str):
 def get_qualification_emoji(q):
     return {"Топ-барбер":"🏆", "Про-барбер":"⭐", "Младший-барбер":"✂️"}.get(q, "")
 
-DAY, TIME_SLOT, BARBER, CLIENT_NAME, CLIENT_PHONE = range(5)
-ADD_BARBER_STATE, DISABLE_DAY_STATE = range(6, 8)
-
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Меню", callback_data="menu")],
@@ -225,6 +222,142 @@ async def show_month(update: Update, context: ContextTypes.DEFAULT_TYPE, month_o
     else:
         await update.effective_message.reply_text("📅 Выберите день для записи (вторник – выходной):", reply_markup=reply_markup)
 
+# ---------- НОВАЯ ЛОГИКА ЗАПИСИ (без ConversationHandler) ----------
+async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['month_offset'] = 0
+    await show_month(update, context, 0)
+
+async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    date_str = query.data.split('_')[1]
+    if not is_working_day(date_str):
+        await query.edit_message_text("Этот день недоступен. Выберите другой.", reply_markup=back_to_menu_keyboard())
+        return
+    context.user_data['booking_date'] = date_str
+    slots = get_available_slots(date_str)
+    if not slots:
+        await query.edit_message_text("На этот день все время занято. Выберите другую дату.", reply_markup=back_to_menu_keyboard())
+        return
+    keyboard = []
+    row = []
+    for slot in slots:
+        row.append(InlineKeyboardButton(slot, callback_data=f"time_{slot}"))
+        if len(row) == 3:
+            keyboard.append(row); row = []
+    if row: keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
+    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    time_str = query.data.split('_')[1]
+    context.user_data['booking_time'] = time_str
+    date_str = context.user_data['booking_date']
+    # повторно проверяем доступность слота
+    slots = get_available_slots(date_str)
+    if time_str not in slots:
+        await query.edit_message_text("⚠️ Это время уже занято. Выберите другое.", reply_markup=back_to_menu_keyboard())
+        return
+    barbers = get_barbers(active_only=True)
+    if not barbers:
+        await query.edit_message_text("Сейчас нет свободных барберов. Попробуйте позже.", reply_markup=back_to_menu_keyboard())
+        return
+    keyboard = []
+    for b in barbers:
+        emoji = get_qualification_emoji(b['qualification'])
+        label = f"{emoji} {b['name']} ({b['qualification']})"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"barber_{b['id']}")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_slots")])
+    await query.edit_message_text("Выберите барбера:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def barber_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    barber_id = int(query.data.split('_')[1])
+    context.user_data['booking_barber_id'] = barber_id
+    context.user_data['awaiting_name'] = True
+    await query.edit_message_text("Введите ваше имя (например, Иван):", reply_markup=cancel_keyboard())
+
+async def back_to_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await book_start(update, context)
+
+async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    date_str = context.user_data['booking_date']
+    slots = get_available_slots(date_str)
+    if not slots:
+        await query.edit_message_text("На этот день все время занято.", reply_markup=back_to_menu_keyboard())
+        return
+    keyboard = []
+    row = []
+    for slot in slots:
+        row.append(InlineKeyboardButton(slot, callback_data=f"time_{slot}"))
+        if len(row) == 3:
+            keyboard.append(row); row = []
+    if row: keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
+    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cancel_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['awaiting_name'] = False
+    context.user_data.pop('booking_date', None)
+    context.user_data.pop('booking_time', None)
+    context.user_data.pop('booking_barber_id', None)
+    await query.edit_message_text("Запись отменена.", reply_markup=main_menu_keyboard())
+
+async def booking_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('awaiting_name', False):
+        name = update.message.text.strip()
+        if len(name) < 2:
+            await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
+            return
+        context.user_data['client_name'] = name
+        context.user_data['awaiting_name'] = False
+        context.user_data['awaiting_phone'] = True
+        await update.message.reply_text("Введите номер телефона (например, +79991234567):", reply_markup=cancel_keyboard())
+
+async def booking_phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('awaiting_phone', False):
+        phone = update.message.text.strip()
+        if not re.match(r'^\+?\d{10,15}$', phone):
+            await update.message.reply_text("Некорректный номер. Попробуйте снова.", reply_markup=cancel_keyboard())
+            return
+        date_str = context.user_data['booking_date']
+        time_str = context.user_data['booking_time']
+        barber_id = context.user_data['booking_barber_id']
+        client_name = context.user_data['client_name']
+        # финальная проверка доступности
+        slots = get_available_slots(date_str)
+        if time_str not in slots:
+            await update.message.reply_text("⚠️ К сожалению, это время уже занято. Запись отменена.", reply_markup=main_menu_keyboard())
+            context.user_data.pop('awaiting_phone', None)
+            return
+        app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
+        if app_id is None:
+            await update.message.reply_text("⚠️ Произошла ошибка при записи. Попробуйте позже.", reply_markup=main_menu_keyboard())
+            context.user_data.pop('awaiting_phone', None)
+            return
+        barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
+        msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+        await update.message.reply_text("✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.", reply_markup=main_menu_keyboard())
+        # чистим состояние
+        context.user_data.pop('awaiting_phone', None)
+        context.user_data.pop('booking_date', None)
+        context.user_data.pop('booking_time', None)
+        context.user_data.pop('booking_barber_id', None)
+        context.user_data.pop('client_name', None)
+
+# ---------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Добро пожаловать в Alpha – пространство мужского стиля.\n\nМы создаём образы, в которых уверенность становится главным аксессуаром.\nЛучшие мастера, безупречный сервис и только мужские стрижки.\n\nВыберите действие:"
     if WELCOME_IMAGE_URL:
@@ -328,12 +461,9 @@ async def back_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['awaiting_issue'] = False
     await update.effective_message.reply_text("Главное меню – выберите раздел:", reply_markup=menu_options_keyboard())
 
-async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data['month_offset'] = 0
-    await show_month(update, context, 0)
-    return DAY
+    await query.answer("Этот день недоступен", show_alert=True)
 
 async def month_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -346,128 +476,7 @@ async def month_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['month_offset'] = offset
     await show_month(update, context, offset)
 
-async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Этот день недоступен", show_alert=True)
-
-async def day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    date_str = query.data.split('_')[1]
-    if not is_working_day(date_str):
-        await query.edit_message_text("Этот день недоступен. Выберите другой.", reply_markup=back_to_menu_keyboard())
-        return DAY
-    context.user_data['date'] = date_str
-    slots = get_available_slots(date_str)
-    if not slots:
-        await query.edit_message_text("На этот день все время занято. Выберите другую дату.", reply_markup=back_to_menu_keyboard())
-        return DAY
-    keyboard = []
-    row = []
-    for slot in slots:
-        row.append(InlineKeyboardButton(slot, callback_data=f"time_{slot}"))
-        if len(row) == 3:
-            keyboard.append(row); row = []
-    if row: keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
-    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return TIME_SLOT
-
-async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    time_str = query.data.split('_')[1]
-    context.user_data['time'] = time_str
-    barbers = get_barbers(active_only=True)
-    if not barbers:
-        await query.edit_message_text("Сейчас нет свободных барберов. Попробуйте позже.", reply_markup=back_to_menu_keyboard())
-        return TIME_SLOT
-    keyboard = []
-    for b in barbers:
-        emoji = get_qualification_emoji(b['qualification'])
-        label = f"{emoji} {b['name']} ({b['qualification']})"
-        keyboard.append([InlineKeyboardButton(label, callback_data=f"barber_{b['id']}")])
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_slots")])
-    await query.edit_message_text("Выберите барбера:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return BARBER
-
-async def barber_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    barber_id = int(query.data.split('_')[1])
-    context.user_data['barber_id'] = barber_id
-    await query.edit_message_text("Введите ваше имя (например, Иван):", reply_markup=cancel_keyboard())
-    return CLIENT_NAME
-
-async def client_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text.strip()
-    if len(name) < 2:
-        await update.message.reply_text("Пожалуйста, введите корректное имя (минимум 2 символа).", reply_markup=cancel_keyboard())
-        return CLIENT_NAME
-    context.user_data['name'] = name
-    await update.message.reply_text("Введите номер телефона (например, +79991234567):", reply_markup=cancel_keyboard())
-    return CLIENT_PHONE
-
-async def client_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    phone = update.message.text.strip()
-    if not re.match(r'^\+?\d{10,15}$', phone):
-        await update.message.reply_text("Некорректный номер. Попробуйте снова.", reply_markup=cancel_keyboard())
-        return CLIENT_PHONE
-    date_str = context.user_data['date']
-    time_str = context.user_data['time']
-    barber_id = context.user_data['barber_id']
-    client_name = context.user_data['name']
-
-    slots = get_available_slots(date_str)
-    if time_str not in slots:
-        await update.message.reply_text(
-            "⚠️ К сожалению, это время уже занято. Пожалуйста, начните запись заново.",
-            reply_markup=main_menu_keyboard()
-        )
-        return ConversationHandler.END
-
-    app_id = add_appointment(date_str, time_str, barber_id, client_name, phone)
-    if app_id is None:
-        await update.message.reply_text(
-            "⚠️ Произошла ошибка при записи. Пожалуйста, попробуйте позже.",
-            reply_markup=main_menu_keyboard()
-        )
-        return ConversationHandler.END
-
-    barber_name = next((b['name'] for b in get_barbers() if b['id'] == barber_id), "неизвестен")
-    msg = f"🟢 Новая запись\nДата: {date_str}\nВремя: {time_str}\nКлиент: {client_name}\nТелефон: {phone}\nБарбер: {barber_name}"
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
-
-    await update.message.reply_text(
-        "✅ Запись успешно оформлена!\n\nЖдём вас по адресу:\nг. Астрахань, Кировский район, 2-я Зеленгинская ул., корп. 3, 1 этаж.",
-        reply_markup=main_menu_keyboard()
-    )
-    return ConversationHandler.END
-
-async def back_to_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    return await book_start(update, context)
-
-async def back_to_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    date_str = context.user_data['date']
-    slots = get_available_slots(date_str)
-    if not slots:
-        await query.edit_message_text("На этот день все время занято.", reply_markup=back_to_menu_keyboard())
-        return DAY
-    keyboard = []
-    row = []
-    for slot in slots:
-        row.append(InlineKeyboardButton(slot, callback_data=f"time_{slot}"))
-        if len(row) == 3:
-            keyboard.append(row); row = []
-    if row: keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_days")])
-    await query.edit_message_text(f"Дата: {datetime.datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y')}\nВыберите время:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return TIME_SLOT
-
+# ---------- АДМИН-ПАНЕЛЬ ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
@@ -542,23 +551,25 @@ async def admin_barbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_add_barber_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    context.user_data['adding_barber'] = True
     await query.edit_message_text("Введите имя и квалификацию в формате:\n`Имя, Квалификация`\n(доступно: Топ-барбер, Про-барбер, Младший-барбер)", parse_mode='Markdown', reply_markup=cancel_keyboard())
-    return ADD_BARBER_STATE
 
 async def admin_add_barber_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('adding_barber', False):
+        return
     text = update.message.text
     parts = text.split(',')
     if len(parts) != 2:
         await update.message.reply_text("Неверный формат. Используйте: Имя, Квалификация", reply_markup=cancel_keyboard())
-        return ADD_BARBER_STATE
+        return
     name = parts[0].strip()
     qual = parts[1].strip()
     if qual not in ["Топ-барбер", "Про-барбер", "Младший-барбер"]:
         await update.message.reply_text("Недопустимая квалификация.", reply_markup=cancel_keyboard())
-        return ADD_BARBER_STATE
+        return
     add_barber(name, qual)
     await update.message.reply_text(f"✅ Барбер {name} добавлен.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_barbers")]]))
-    return ConversationHandler.END
+    context.user_data['adding_barber'] = False
 
 async def admin_toggle_barber(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -581,22 +592,25 @@ async def admin_toggle_barber_callback(update: Update, context: ContextTypes.DEF
 async def admin_disable_day_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    context.user_data['disabling_day'] = True
     await query.edit_message_text("Введите дату для отключения в формате ДД.ММ.ГГГГ (например, 15.07.2026):", reply_markup=cancel_keyboard())
-    return DISABLE_DAY_STATE
 
 async def admin_disable_day_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('disabling_day', False):
+        return
     text = update.message.text.strip()
     try:
         d = datetime.datetime.strptime(text, "%d.%m.%Y").date().strftime("%Y-%m-%d")
     except:
         await update.message.reply_text("Неверный формат. Используйте ДД.ММ.ГГГГ", reply_markup=cancel_keyboard())
-        return DISABLE_DAY_STATE
+        return
     if d in get_disabled_days():
         await update.message.reply_text("Этот день уже отключён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
-        return ConversationHandler.END
+        context.user_data['disabling_day'] = False
+        return
     disable_day(d)
     await update.message.reply_text(f"✅ День {text} отключён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]))
-    return ConversationHandler.END
+    context.user_data['disabling_day'] = False
 
 async def admin_enable_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -697,53 +711,22 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
+    # Основные callback'и
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(issue_callback, pattern="^issue$"))
     app.add_handler(CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))
     app.add_handler(CallbackQueryHandler(month_navigation, pattern="^month_"))
+    app.add_handler(CallbackQueryHandler(book_start, pattern="^book$"))
     app.add_handler(CallbackQueryHandler(day_selected, pattern="^day_"))
+    app.add_handler(CallbackQueryHandler(time_selected, pattern="^time_"))
+    app.add_handler(CallbackQueryHandler(barber_selected, pattern="^barber_"))
+    app.add_handler(CallbackQueryHandler(back_to_days, pattern="^back_to_days$"))
+    app.add_handler(CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"))
+    app.add_handler(CallbackQueryHandler(cancel_booking, pattern="^cancel$"))
 
-    book_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(book_start, pattern="^book$")],
-        states={
-            DAY: [
-                CallbackQueryHandler(day_selected, pattern="^day_"),
-                CallbackQueryHandler(month_navigation, pattern="^month_"),
-                CallbackQueryHandler(noop_callback, pattern="^noop$"),
-            ],
-            TIME_SLOT: [CallbackQueryHandler(time_selected, pattern="^time_")],
-            BARBER: [CallbackQueryHandler(barber_selected, pattern="^barber_")],
-            CLIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_name)],
-            CLIENT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_phone)],
-        },
-        fallbacks=[
-            CallbackQueryHandler(back_to_days, pattern="^back_to_days$"),
-            CallbackQueryHandler(back_to_slots, pattern="^back_to_slots$"),
-            CallbackQueryHandler(back_to_menu_callback, pattern="^back_to_menu$"),
-            CallbackQueryHandler(cancel_callback, pattern="^cancel$")
-        ],
-        per_message=True,
-    )
-    app.add_handler(book_conv)
-
-    add_barber_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$")],
-        states={ADD_BARBER_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
-    app.add_handler(add_barber_conv)
-
-    disable_day_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$")],
-        states={DISABLE_DAY_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text)]},
-        fallbacks=[CallbackQueryHandler(cancel_callback, pattern="^cancel$")],
-        per_message=True,
-    )
-    app.add_handler(disable_day_conv)
-
+    # Админ-панель
     app.add_handler(CallbackQueryHandler(admin_appointments, pattern="^admin_appointments$"))
     app.add_handler(CallbackQueryHandler(admin_barbers, pattern="^admin_barbers$"))
     app.add_handler(CallbackQueryHandler(admin_enable_day, pattern="^admin_enable_day$"))
@@ -756,12 +739,21 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_enable_day_callback, pattern="^enable_"))
     app.add_handler(CallbackQueryHandler(admin_issue_detail, pattern=r"^issue_\d+$"))
     app.add_handler(CallbackQueryHandler(admin_issue_resolve, pattern="^issue_resolve_"))
+    app.add_handler(CallbackQueryHandler(admin_add_barber_start, pattern="^admin_add_barber$"))
+    app.add_handler(CallbackQueryHandler(admin_disable_day_start, pattern="^admin_disable_day$"))
 
+    # Информационные разделы
     app.add_handler(CallbackQueryHandler(about_callback, pattern="^about$"))
     app.add_handler(CallbackQueryHandler(prices_callback, pattern="^prices$"))
     app.add_handler(CallbackQueryHandler(reviews_callback, pattern="^reviews$"))
     app.add_handler(CallbackQueryHandler(contacts_callback, pattern="^contacts$"))
 
+    # Обработчики текстовых сообщений для ввода имени/телефона, добавления барбера, отключения дня
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, booking_phone_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_barber_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_disable_day_text))
+    # Обработчик проблемы должен идти последним
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, issue_text_handler))
 
     app.add_error_handler(error_handler)
